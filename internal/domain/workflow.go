@@ -50,8 +50,8 @@ type SkillRef struct {
 
 // RuntimeRef specifies which runtime adapter executes this node.
 type RuntimeRef struct {
-	Provider string `json:"provider"` // "claude-code", "codex"
-	Model    string `json:"model,omitempty"`
+	Provider RuntimeProvider `json:"provider"`
+	Model    string          `json:"model,omitempty"`
 }
 
 // Edge is a dependency edge in the workflow DAG.

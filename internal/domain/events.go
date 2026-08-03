@@ -155,6 +155,39 @@ type ArtifactCreated struct {
 	ContentHash string `json:"content_hash"`
 }
 
+// ── Observability Payloads ───────────────────────
+
+// NodeHeartbeat is the payload for NODE_HEARTBEAT events.
+// Emitted periodically by the runtime to signal liveness.
+type NodeHeartbeat struct {
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	SessionID  string `json:"session_id"`
+	Status     string `json:"status"` // snapshot of current node status
+}
+
+// MetricsSnapshot is the payload for METRICS_SNAPSHOT events.
+// Emitted to capture incremental resource usage of a running agent.
+type MetricsSnapshot struct {
+	NodeID     string  `json:"node_id"`
+	WorkflowID string  `json:"workflow_id"`
+	SessionID  string  `json:"session_id"`
+	TokensIn   int64   `json:"tokens_in"`
+	TokensOut  int64   `json:"tokens_out"`
+	ToolCalls  int     `json:"tool_calls"`
+	CostUSD    float64 `json:"cost_usd"`
+	DurationMs int64   `json:"duration_ms"`
+}
+
+// NodeAnnotated is the payload for NODE_ANNOTATED events.
+// Emitted when a human or system annotates a node execution.
+type NodeAnnotated struct {
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	Key        string `json:"key"`
+	Value      string `json:"value"`
+}
+
 // ── Human Interaction Payloads ────────────────────
 
 // HumanApprovalRequired is the payload for HUMAN_APPROVAL_REQUIRED events.

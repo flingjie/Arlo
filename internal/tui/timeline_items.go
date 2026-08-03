@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -105,6 +106,47 @@ func (i NodeWaitingItem) Render() string {
 	return fmt.Sprintf("%s waiting: %s", i.NodeID, i.Reason)
 }
 
+// NodeAnnotatedItem represents a NODE_ANNOTATED event.
+type NodeAnnotatedItem struct {
+	Timestamp time.Time
+	NodeID    string
+	Key       string
+	Value     string
+}
+
+func (i NodeAnnotatedItem) Time() time.Time { return i.Timestamp }
+func (i NodeAnnotatedItem) Level() Level    { return INFO }
+func (i NodeAnnotatedItem) Render() string {
+	return fmt.Sprintf("%s annotated: %s=%s", i.NodeID, i.Key, i.Value)
+}
+
+// NodeHeartbeatItem represents a NODE_HEARTBEAT event.
+type NodeHeartbeatItem struct {
+	Timestamp time.Time
+	NodeID    string
+}
+
+func (i NodeHeartbeatItem) Time() time.Time { return i.Timestamp }
+func (i NodeHeartbeatItem) Level() Level    { return DEBUG }
+func (i NodeHeartbeatItem) Render() string {
+	return fmt.Sprintf("%s heartbeat", i.NodeID)
+}
+
+// MetricsSnapshotItem represents a METRICS_SNAPSHOT event.
+type MetricsSnapshotItem struct {
+	Timestamp time.Time
+	NodeID    string
+	TokensIn  int64
+	TokensOut int64
+	CostUSD   float64
+}
+
+func (i MetricsSnapshotItem) Time() time.Time { return i.Timestamp }
+func (i MetricsSnapshotItem) Level() Level    { return INFO }
+func (i MetricsSnapshotItem) Render() string {
+	return fmt.Sprintf("%s metrics: %d↑/%d↓ tokens, $%.4f", i.NodeID, i.TokensIn, i.TokensOut, i.CostUSD)
+}
+
 // GenericEventItem wraps a gRPC event into a timeline item.
 type GenericEventItem struct {
 	Timestamp time.Time
@@ -118,6 +160,8 @@ func (i GenericEventItem) Level() Level {
 		return ERROR
 	case "NODE_WAITING":
 		return WARN
+	case "NODE_HEARTBEAT":
+		return DEBUG
 	default:
 		return INFO
 	}
@@ -145,6 +189,14 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 		return NodeFailedItem{Timestamp: t, NodeID: nodeID}
 	case "NODE_WAITING":
 		return NodeWaitingItem{Timestamp: t, NodeID: nodeID}
+	case "NODE_ANNOTATED":
+		key, val := extractAnnotation(event)
+		return NodeAnnotatedItem{Timestamp: t, NodeID: nodeID, Key: key, Value: val}
+	case "NODE_HEARTBEAT":
+		return NodeHeartbeatItem{Timestamp: t, NodeID: nodeID}
+	case "METRICS_SNAPSHOT":
+		tokensIn, tokensOut, cost := extractMetrics(event)
+		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: tokensIn, TokensOut: tokensOut, CostUSD: cost}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
@@ -158,4 +210,27 @@ func extractNodeID(event *arlov1.Event) string {
 		return sid[5:]
 	}
 	return ""
+}
+
+// extractAnnotation extracts key/value from a NODE_ANNOTATED event payload.
+func extractAnnotation(event *arlov1.Event) (string, string) {
+	// Payload is JSON with "key" and "value" fields.
+	// Use a simple JSON decode.
+	var payload struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	return payload.Key, payload.Value
+}
+
+// extractMetrics extracts token/cost info from a METRICS_SNAPSHOT event payload.
+func extractMetrics(event *arlov1.Event) (int64, int64, float64) {
+	var payload struct {
+		TokensIn  int64   `json:"tokens_in"`
+		TokensOut int64   `json:"tokens_out"`
+		CostUSD   float64 `json:"cost_usd"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	return payload.TokensIn, payload.TokensOut, payload.CostUSD
 }

@@ -103,7 +103,7 @@ func (s *ArloService) CreateTask(ctx context.Context, req *arlov1.CreateTaskRequ
 				NodeID:     n.ID,
 				WorkflowID: wfID,
 				SkillName:  n.SkillRef.Name,
-				Runtime:    n.Runtime.Provider,
+				Runtime:    string(n.Runtime.Provider),
 				DependsOn:  n.DependsOn,
 				Gate:       string(n.Gate),
 			}),
@@ -393,6 +393,40 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 		}
 		s.stateStore.Rebuild(ctx)
 		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("node %s %sd", nodeID, req.Command)}, nil
+
+	case "annotate":
+		// Add an annotation to a node.
+		// req.Target = nodeID, req.Input = "key=value"
+		nodeID := req.Target
+		key := req.Command // fallback
+		val := req.Input
+		if strings.Contains(req.Input, "=") {
+			parts := strings.SplitN(req.Input, "=", 2)
+			key = parts[0]
+			val = parts[1]
+		}
+
+		// Look up the node to find its workflow.
+		ns, nsErr := s.stateStore.GetNodeState(ctx, nodeID)
+		if nsErr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: fmt.Sprintf("node %s not found: %v", nodeID, nsErr)}, nil
+		}
+
+		_, aerr := s.eventStore.Append(ctx, "node-"+nodeID, []store.Event{{
+			ID:   fmt.Sprintf("evt-annot-%d", time.Now().UnixNano()),
+			Type: store.EventNodeAnnotated,
+			Payload: marshalJSON(domain.NodeAnnotated{
+				NodeID:     nodeID,
+				WorkflowID: ns.WorkflowID,
+				Key:        key,
+				Value:      val,
+			}),
+		}})
+		if aerr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: aerr.Error()}, nil
+		}
+		s.stateStore.Rebuild(ctx)
+		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("annotated node %s: %s=%s", nodeID, key, val)}, nil
 
 	default:
 		return &arlov1.CommandResponse{Success: false, Message: "unknown command: " + req.Command}, nil

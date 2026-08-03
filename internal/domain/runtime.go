@@ -1,5 +1,15 @@
 package domain
 
+// RuntimeProvider identifies an agent runtime implementation.
+type RuntimeProvider string
+
+// Well-known runtime providers.
+const (
+	RuntimeProviderClaudeCode RuntimeProvider = "claude-code"
+	RuntimeProviderCodex      RuntimeProvider = "codex"
+	RuntimeProviderGeminiCLI  RuntimeProvider = "gemini-cli"
+)
+
 // RuntimeState represents the lifecycle state of a RuntimeInstance.
 type RuntimeState string
 
@@ -14,15 +24,15 @@ const (
 
 // RuntimeInstance represents a running agent process.
 type RuntimeInstance struct {
-	ID          string        `json:"id"`
-	Type        string        `json:"type"` // "claude-code", "codex"
-	Config      RuntimeConfig `json:"config"`
-	SessionID   string        `json:"session_id"`
-	WorkspaceID string        `json:"workspace_id"`
-	SlotID      string        `json:"slot_id"`
-	WorkDir     string        `json:"work_dir"`
-	Prompt      string        `json:"prompt"`
-	State       RuntimeState  `json:"state"`
+	ID          string          `json:"id"`
+	Type        RuntimeProvider `json:"type"`
+	Config      RuntimeConfig   `json:"config"`
+	SessionID   string          `json:"session_id"`
+	WorkspaceID string          `json:"workspace_id"`
+	SlotID      string          `json:"slot_id"`
+	WorkDir     string          `json:"work_dir"`
+	Prompt      string          `json:"prompt"`
+	State       RuntimeState    `json:"state"`
 }
 
 // RuntimeConfig configures how an agent runtime behaves.

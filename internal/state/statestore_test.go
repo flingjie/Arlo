@@ -470,3 +470,113 @@ func BenchmarkRebuild(b *testing.B) {
 		ss.Rebuild(ctx)
 	}
 }
+
+// ── New Projection Tests ─────────────────────────
+
+// TestNodeAnnotationProjection verifies annotation events accumulate on node state.
+func TestNodeAnnotationProjection(t *testing.T) {
+	ss, es := newTestStateStore(t)
+	ctx := context.Background()
+
+	appendEvent(t, es, "workflow-w1", makeEvent("evt-1", store.EventWorkflowCreated, domain.WorkflowCreated{
+		WorkflowID: "w1", TaskID: "t1", GraphName: "test", Version: 1,
+	}))
+	appendEvent(t, es, "node-n1", makeEvent("evt-2", store.EventNodeCreated, domain.NodeCreated{
+		NodeID: "coder", WorkflowID: "w1", SkillName: "code", Runtime: "claude-code",
+	}))
+	ss.Rebuild(ctx)
+
+	// Add annotations.
+	appendEvent(t, es, "node-n1", makeEvent("evt-3", store.EventNodeAnnotated, domain.NodeAnnotated{
+		NodeID: "coder", WorkflowID: "w1", Key: "human_rating", Value: "good",
+	}))
+	appendEvent(t, es, "node-n1", makeEvent("evt-4", store.EventNodeAnnotated, domain.NodeAnnotated{
+		NodeID: "coder", WorkflowID: "w1", Key: "accepted", Value: "true",
+	}))
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "coder")
+	if len(ns.Annotations) != 2 {
+		t.Fatalf("expected 2 annotations, got %d", len(ns.Annotations))
+	}
+	if ns.Annotations[0].Key != "human_rating" {
+		t.Errorf("annot[0].Key = %s, want human_rating", ns.Annotations[0].Key)
+	}
+	if ns.Annotations[1].Key != "accepted" {
+		t.Errorf("annot[1].Key = %s, want accepted", ns.Annotations[1].Key)
+	}
+}
+
+// TestHeartbeatProjection verifies heartbeat events are processed without errors.
+func TestHeartbeatProjection(t *testing.T) {
+	ss, es := newTestStateStore(t)
+	ctx := context.Background()
+
+	appendEvent(t, es, "workflow-w1", makeEvent("evt-1", store.EventWorkflowCreated, domain.WorkflowCreated{
+		WorkflowID: "w1", TaskID: "t1", GraphName: "test", Version: 1,
+	}))
+	appendEvent(t, es, "node-n1", makeEvent("evt-2", store.EventNodeCreated, domain.NodeCreated{
+		NodeID: "coder", WorkflowID: "w1", SkillName: "code", Runtime: "claude-code",
+	}))
+	ss.Rebuild(ctx)
+
+	// Send heartbeat — should not error.
+	appendEvent(t, es, "node-n1", makeEvent("evt-3", store.EventNodeHeartbeat, domain.NodeHeartbeat{
+		NodeID: "coder", WorkflowID: "w1", SessionID: "sess-1", Status: "RUNNING",
+	}))
+	if err := ss.Rebuild(ctx); err != nil {
+		t.Fatalf("heartbeat should not cause error: %v", err)
+	}
+
+	// Heartbeat for unknown node should error.
+	appendEvent(t, es, "node-unknown", makeEvent("evt-4", store.EventNodeHeartbeat, domain.NodeHeartbeat{
+		NodeID: "unknown", WorkflowID: "w1", SessionID: "sess-x", Status: "RUNNING",
+	}))
+	err := ss.Rebuild(ctx)
+	if err == nil {
+		t.Fatal("expected error for heartbeat on unknown node")
+	}
+}
+
+// TestMetricsSnapshotProjection verifies metrics accumulate across snapshots.
+func TestMetricsSnapshotProjection(t *testing.T) {
+	ss, es := newTestStateStore(t)
+	ctx := context.Background()
+
+	appendEvent(t, es, "workflow-w1", makeEvent("evt-1", store.EventWorkflowCreated, domain.WorkflowCreated{
+		WorkflowID: "w1", TaskID: "t1", GraphName: "test", Version: 1,
+	}))
+	appendEvent(t, es, "node-n1", makeEvent("evt-2", store.EventNodeCreated, domain.NodeCreated{
+		NodeID: "coder", WorkflowID: "w1", SkillName: "code", Runtime: "claude-code",
+	}))
+	ss.Rebuild(ctx)
+
+	// First metrics snapshot.
+	appendEvent(t, es, "node-n1", makeEvent("evt-3", store.EventMetricsSnapshot, domain.MetricsSnapshot{
+		NodeID: "coder", WorkflowID: "w1", SessionID: "sess-1",
+		TokensIn: 1000, TokensOut: 500, ToolCalls: 5, CostUSD: 0.03, DurationMs: 15000,
+	}))
+	// Second metrics snapshot — should accumulate.
+	appendEvent(t, es, "node-n1", makeEvent("evt-4", store.EventMetricsSnapshot, domain.MetricsSnapshot{
+		NodeID: "coder", WorkflowID: "w1", SessionID: "sess-1",
+		TokensIn: 800, TokensOut: 400, ToolCalls: 3, CostUSD: 0.02, DurationMs: 10000,
+	}))
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "coder")
+	if ns.Metrics.TokensIn != 1800 {
+		t.Errorf("TokensIn = %d, want 1800", ns.Metrics.TokensIn)
+	}
+	if ns.Metrics.TokensOut != 900 {
+		t.Errorf("TokensOut = %d, want 900", ns.Metrics.TokensOut)
+	}
+	if ns.Metrics.ToolCalls != 8 {
+		t.Errorf("ToolCalls = %d, want 8", ns.Metrics.ToolCalls)
+	}
+	if ns.Metrics.CostUSD != 0.05 {
+		t.Errorf("CostUSD = %.4f, want 0.0500", ns.Metrics.CostUSD)
+	}
+	if ns.Metrics.DurationMs != 25000 {
+		t.Errorf("DurationMs = %d, want 25000", ns.Metrics.DurationMs)
+	}
+}

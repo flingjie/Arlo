@@ -32,12 +32,31 @@ type NodeState struct {
 	DependsOn   []string          `json:"depends_on,omitempty"`
 	Children    []string          `json:"children,omitempty"`
 	Gate        string            `json:"gate,omitempty"`
+	Annotations []Annotation      `json:"annotations,omitempty"`
+	Metrics     NodeMetrics       `json:"metrics,omitempty"`
+}
+
+// Annotation is a human or system annotation attached to a node execution.
+// Annotations enable evaluation, fine-tuning, and replay loops.
+type Annotation struct {
+	Key       string    `json:"key"`       // "human_rating", "bug_found", "accepted"
+	Value     string    `json:"value"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// NodeMetrics captures runtime performance data for a node execution.
+type NodeMetrics struct {
+	TokensIn   int64   `json:"tokens_in"`
+	TokensOut  int64   `json:"tokens_out"`
+	ToolCalls  int     `json:"tool_calls"`
+	CostUSD    float64 `json:"cost_usd"`
+	DurationMs int64   `json:"duration_ms"`
 }
 
 // Decision represents an action the Reconciler should take.
 // Produced by WorkflowEngine.Evaluate().
 type Decision struct {
-	Action string `json:"action"` // "START_NODE", "STOP_NODE", "COMPLETE_WORKFLOW"
+	Action string `json:"action"` // "START_NODE", "PAUSE_NODE", "RESUME_NODE", "RETRY_NODE", ...
 	NodeID string `json:"node_id,omitempty"`
 	Reason string `json:"reason"`
 }
@@ -46,6 +65,9 @@ type Decision struct {
 const (
 	DecisionStartNode          = "START_NODE"
 	DecisionStopNode           = "STOP_NODE"
+	DecisionPauseNode          = "PAUSE_NODE"
+	DecisionResumeNode         = "RESUME_NODE"
+	DecisionRetryNode          = "RETRY_NODE"
 	DecisionCompleteWorkflow   = "COMPLETE_WORKFLOW"
 	DecisionFailWorkflow       = "FAIL_WORKFLOW"
 )

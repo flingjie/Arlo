@@ -75,7 +75,7 @@ func TestCompileValid(t *testing.T) {
 	if analyze.SkillRef.Name != "root-cause" {
 		t.Errorf("node[0].skill = %s, want root-cause", analyze.SkillRef.Name)
 	}
-	if analyze.Runtime.Provider != "claude-code" {
+	if analyze.Runtime.Provider != domain.RuntimeProviderClaudeCode {
 		t.Errorf("node[0].runtime.provider = %s, want claude-code", analyze.Runtime.Provider)
 	}
 	if len(analyze.DependsOn) != 0 {
@@ -142,7 +142,7 @@ nodes:
 	if graph.Policy.MaxConcurrentNodes != 1 {
 		t.Errorf("default max_concurrent = %d, want 1", graph.Policy.MaxConcurrentNodes)
 	}
-	if graph.Nodes[0].Runtime.Provider != "claude-code" {
+	if graph.Nodes[0].Runtime.Provider != domain.RuntimeProviderClaudeCode {
 		t.Errorf("default runtime provider = %s, want claude-code", graph.Nodes[0].Runtime.Provider)
 	}
 	if graph.Nodes[0].Retry.Backoff != 10*1e9 { // 10s in nanoseconds
@@ -640,4 +640,216 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ── New Decision Tests ────────────────────────────
+
+// TestEvaluateRetryNode verifies READY nodes with retry_count > 0 get RETRY_NODE.
+func TestEvaluateRetryNode(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+
+	graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+
+	// analyze is READY with retry_count > 0 → should get RETRY_NODE.
+	state := domain.WorkflowState{
+		ID:     "wf-1",
+		Status: domain.WorkflowStatusActive,
+		Nodes: map[string]domain.NodeState{
+			"analyze":   {NodeID: "analyze", Status: domain.NodeStatusReady, RetryCount: 1},
+			"implement": {NodeID: "implement", Status: domain.NodeStatusPending},
+			"review":    {NodeID: "review", Status: domain.NodeStatusPending},
+		},
+	}
+
+	decisions, err := eng.Evaluate(ctx, graph, state)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Action != domain.DecisionRetryNode {
+		t.Errorf("action = %s, want RETRY_NODE", decisions[0].Action)
+	}
+	if decisions[0].NodeID != "analyze" {
+		t.Errorf("node = %s, want analyze", decisions[0].NodeID)
+	}
+}
+
+// TestEvaluateResumeNode verifies READY nodes with retry_count == 0 get RESUME_NODE.
+func TestEvaluateResumeNode(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+
+	graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+
+	// analyze is READY with retry_count == 0 (after human approval) → RESUME_NODE.
+	state := domain.WorkflowState{
+		ID:     "wf-1",
+		Status: domain.WorkflowStatusActive,
+		Nodes: map[string]domain.NodeState{
+			"analyze":   {NodeID: "analyze", Status: domain.NodeStatusReady, RetryCount: 0},
+			"implement": {NodeID: "implement", Status: domain.NodeStatusPending},
+			"review":    {NodeID: "review", Status: domain.NodeStatusPending},
+		},
+	}
+
+	decisions, err := eng.Evaluate(ctx, graph, state)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Action != domain.DecisionResumeNode {
+		t.Errorf("action = %s, want RESUME_NODE", decisions[0].Action)
+	}
+}
+
+// TestEvaluatePauseNode verifies RUNNING nodes with a human_approval gate get PAUSE_NODE.
+func TestEvaluatePauseNode(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+
+	graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+
+	// review is RUNNING with gate=human_approval → should get PAUSE_NODE.
+	state := domain.WorkflowState{
+		ID:     "wf-1",
+		Status: domain.WorkflowStatusActive,
+		Nodes: map[string]domain.NodeState{
+			"analyze":    {NodeID: "analyze", Status: domain.NodeStatusCompleted},
+			"implement":  {NodeID: "implement", Status: domain.NodeStatusCompleted},
+			"review":     {NodeID: "review", Status: domain.NodeStatusRunning, Gate: "human_approval"},
+		},
+	}
+
+	decisions, err := eng.Evaluate(ctx, graph, state)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	// Should have PAUSE_NODE for review.
+	found := false
+	for _, d := range decisions {
+		if d.Action == domain.DecisionPauseNode && d.NodeID == "review" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected PAUSE_NODE for review, got %v", decisions)
+	}
+}
+
+// TestEvaluateNoPauseForNonGated verifies RUNNING nodes without a gate don't get PAUSE_NODE.
+func TestEvaluateNoPauseForNonGated(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+
+	graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+
+	// All nodes running without gates (or completed). No pause decisions.
+	state := domain.WorkflowState{
+		ID:     "wf-1",
+		Status: domain.WorkflowStatusActive,
+		Nodes: map[string]domain.NodeState{
+			"analyze":   {NodeID: "analyze", Status: domain.NodeStatusRunning},
+			"implement": {NodeID: "implement", Status: domain.NodeStatusPending},
+			"review":    {NodeID: "review", Status: domain.NodeStatusPending},
+		},
+	}
+
+	decisions, err := eng.Evaluate(ctx, graph, state)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	for _, d := range decisions {
+		if d.Action == domain.DecisionPauseNode {
+			t.Errorf("unexpected PAUSE_NODE for %s (no gate set)", d.NodeID)
+		}
+	}
+}
+
+// TestEvaluateMixedDecisions verifies mixed decisions: START + PAUSE in one evaluation.
+func TestEvaluateMixedDecisions(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+
+	// Use a custom DAG: analyze → implement; analyze → review (both depend on analyze).
+	// This allows review to start while implement is running.
+	customYAML := `name: mixed
+version: 1
+nodes:
+  - id: analyze
+    skill: root-cause
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    retry:
+      max_retries: 1
+      backoff: 10s
+  - id: implement
+    skill: code
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    depends_on:
+      - analyze
+    gate: human_approval
+    retry:
+      max_retries: 1
+      backoff: 10s
+  - id: review
+    skill: review
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    depends_on:
+      - analyze
+    retry:
+      max_retries: 1
+      backoff: 10s
+`
+	graph, err := eng.Compile(ctx, []byte(customYAML))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+
+	// analyze completed, implement RUNNING with gate, review PENDING (dep satisfied).
+	state := domain.WorkflowState{
+		ID:     "wf-1",
+		Status: domain.WorkflowStatusActive,
+		Nodes: map[string]domain.NodeState{
+			"analyze":    {NodeID: "analyze", Status: domain.NodeStatusCompleted},
+			"implement":  {NodeID: "implement", Status: domain.NodeStatusRunning, Gate: "human_approval"},
+			"review":     {NodeID: "review", Status: domain.NodeStatusPending},
+		},
+	}
+
+	decisions, err := eng.Evaluate(ctx, graph, state)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	// Should have START_NODE for review (dep satisfied) + PAUSE_NODE for implement (gated).
+	var hasStart, hasPause bool
+	for _, d := range decisions {
+		if d.Action == domain.DecisionStartNode && d.NodeID == "review" {
+			hasStart = true
+		}
+		if d.Action == domain.DecisionPauseNode && d.NodeID == "implement" {
+			hasPause = true
+		}
+	}
+	if !hasStart {
+		t.Error("expected START_NODE for review")
+	}
+	if !hasPause {
+		t.Error("expected PAUSE_NODE for implement")
+	}
 }

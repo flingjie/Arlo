@@ -82,6 +82,13 @@ const (
 	// Human-in-loop
 	EventHumanApprovalRequired EventType = "HUMAN_APPROVAL_REQUIRED"
 	EventHumanInputReceived    EventType = "HUMAN_INPUT_RECEIVED"
+
+	// Observability
+	EventNodeHeartbeat   EventType = "NODE_HEARTBEAT"
+	EventMetricsSnapshot EventType = "METRICS_SNAPSHOT"
+
+	// Annotations
+	EventNodeAnnotated EventType = "NODE_ANNOTATED"
 )
 
 // EventStore is the append-only, immutable event log.

@@ -13,21 +13,21 @@ import (
 // It maintains a registry of adapters (one per runtime type) and tracks
 // active instances.
 type Manager struct {
-	mu       sync.RWMutex
-	adapters map[string]Adapter             // type → adapter
-	instances map[string]*domain.RuntimeInstance // instanceID → instance
+	mu        sync.RWMutex
+	adapters  map[domain.RuntimeProvider]Adapter       // type → adapter
+	instances map[string]*domain.RuntimeInstance        // instanceID → instance
 }
 
 // NewManager creates a new RuntimeManager.
 func NewManager() *Manager {
 	return &Manager{
-		adapters:  make(map[string]Adapter),
+		adapters:  make(map[domain.RuntimeProvider]Adapter),
 		instances: make(map[string]*domain.RuntimeInstance),
 	}
 }
 
 // RegisterAdapter adds a runtime adapter for a given type name.
-func (m *Manager) RegisterAdapter(typeName string, adapter Adapter) {
+func (m *Manager) RegisterAdapter(typeName domain.RuntimeProvider, adapter Adapter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.adapters[typeName] = adapter
@@ -171,7 +171,7 @@ func (m *Manager) AttachInstance(ctx context.Context, id string) (<-chan domain.
 // RuntimeSpec contains all information needed to start a RuntimeInstance.
 type RuntimeSpec struct {
 	InstanceID  string
-	Type        string
+	Type        domain.RuntimeProvider
 	Config      domain.RuntimeConfig
 	SessionID   string
 	WorkspaceID string

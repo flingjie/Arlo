@@ -303,6 +303,16 @@ func (p *workflowProjection) Apply(event store.Event) error {
 	case store.EventHumanInputReceived:
 		return p.applyHumanInputReceived(event)
 
+	// ── Observability ────────────────────────────
+	case store.EventNodeHeartbeat:
+		return p.applyNodeHeartbeat(event)
+	case store.EventMetricsSnapshot:
+		return p.applyMetricsSnapshot(event)
+
+	// ── Annotations ───────────────────────────────
+	case store.EventNodeAnnotated:
+		return p.applyNodeAnnotated(event)
+
 	default:
 		// Unknown event types are silently ignored — projections are
 		// additive and don't need to know every event type.
@@ -515,6 +525,62 @@ func (p *workflowProjection) applyHumanInputReceived(event store.Event) error {
 	} else {
 		ns.Status = domain.NodeStatusFailed
 	}
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
+}
+
+// ── Observability applicators ─────────────────────
+
+func (p *workflowProjection) applyNodeHeartbeat(event store.Event) error {
+	var payload domain.NodeHeartbeat
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal NodeHeartbeat: %w", err)
+	}
+	// Heartbeat is a lightweight liveness check — just verify the node exists.
+	// The node status in the event payload is informational.
+	_, _, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeHeartbeat: %w", err)
+	}
+	return nil
+}
+
+func (p *workflowProjection) applyMetricsSnapshot(event store.Event) error {
+	var payload domain.MetricsSnapshot
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal MetricsSnapshot: %w", err)
+	}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("MetricsSnapshot: %w", err)
+	}
+	ns.Metrics = domain.NodeMetrics{
+		TokensIn:   ns.Metrics.TokensIn + payload.TokensIn,
+		TokensOut:  ns.Metrics.TokensOut + payload.TokensOut,
+		ToolCalls:  ns.Metrics.ToolCalls + payload.ToolCalls,
+		CostUSD:    ns.Metrics.CostUSD + payload.CostUSD,
+		DurationMs: ns.Metrics.DurationMs + payload.DurationMs,
+	}
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
+}
+
+// ── Annotation applicators ────────────────────────
+
+func (p *workflowProjection) applyNodeAnnotated(event store.Event) error {
+	var payload domain.NodeAnnotated
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal NodeAnnotated: %w", err)
+	}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeAnnotated: %w", err)
+	}
+	ns.Annotations = append(ns.Annotations, domain.Annotation{
+		Key:       payload.Key,
+		Value:     payload.Value,
+		Timestamp: event.Timestamp,
+	})
 	wf.Nodes[payload.NodeID] = *ns
 	return nil
 }

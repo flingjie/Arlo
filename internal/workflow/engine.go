@@ -77,11 +77,11 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 		}
 
 		runtime := domain.RuntimeRef{
-			Provider: nd.Runtime.Provider,
+			Provider: domain.RuntimeProvider(nd.Runtime.Provider),
 			Model:    nd.Runtime.Model,
 		}
 		if runtime.Provider == "" {
-			runtime.Provider = "claude-code"
+			runtime.Provider = domain.RuntimeProviderClaudeCode
 		}
 
 		nodes = append(nodes, domain.ExecutableNode{
@@ -207,7 +207,10 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 	}
 
 	// Find nodes ready to start: PENDING or READY status with all deps satisfied.
-	// startedNodes deduplicates: a node can only receive one START_NODE decision.
+	// The distinction between PENDING and READY determines the decision action:
+	//   PENDING → START_NODE  (cold start)
+	//   READY, retry_count > 0 → RETRY_NODE  (retry after retryable failure)
+	//   READY, retry_count == 0 → RESUME_NODE (resume after human approval)
 	startedNodes := make(map[string]bool)
 	for _, ns := range state.Nodes {
 		if ns.Status != domain.NodeStatusPending && ns.Status != domain.NodeStatusReady {
@@ -216,12 +219,41 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 		if !depsSatisfied(ns.NodeID, graph, state) {
 			continue
 		}
+
+		var action, reason string
+		switch {
+		case ns.Status == domain.NodeStatusPending:
+			action = domain.DecisionStartNode
+			reason = "dependencies satisfied"
+		case ns.RetryCount > 0:
+			action = domain.DecisionRetryNode
+			reason = fmt.Sprintf("retry %d after retryable failure", ns.RetryCount)
+		default:
+			action = domain.DecisionResumeNode
+			reason = "resume after approval or wait"
+		}
+
 		decisions = append(decisions, domain.Decision{
-			Action: domain.DecisionStartNode,
+			Action: action,
 			NodeID: ns.NodeID,
-			Reason: "dependencies satisfied",
+			Reason: reason,
 		})
 		startedNodes[ns.NodeID] = true
+	}
+
+	// Find running nodes with human_approval gates that should be paused.
+	for _, ns := range state.Nodes {
+		if ns.Status != domain.NodeStatusRunning {
+			continue
+		}
+		if ns.Gate == "" || ns.Gate == string(domain.GateNone) {
+			continue
+		}
+		decisions = append(decisions, domain.Decision{
+			Action: domain.DecisionPauseNode,
+			NodeID: ns.NodeID,
+			Reason: fmt.Sprintf("gate %s requires human approval", ns.Gate),
+		})
 	}
 
 	// Check for conditional transitions (v0.2).

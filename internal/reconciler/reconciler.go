@@ -145,6 +145,12 @@ func (r *Reconciler) executeDecision(ctx context.Context, workflowID string, d d
 	switch d.Action {
 	case domain.DecisionStartNode:
 		return r.executeStartNode(ctx, workflowID, d)
+	case domain.DecisionRetryNode:
+		return r.executeRetryNode(ctx, workflowID, d)
+	case domain.DecisionResumeNode:
+		return r.executeResumeNode(ctx, workflowID, d)
+	case domain.DecisionPauseNode:
+		return r.executePauseNode(ctx, workflowID, d)
 	case domain.DecisionCompleteWorkflow:
 		return r.executeCompleteWorkflow(ctx, workflowID, d)
 	case domain.DecisionFailWorkflow:
@@ -152,6 +158,154 @@ func (r *Reconciler) executeDecision(ctx context.Context, workflowID string, d d
 	default:
 		return fmt.Errorf("unknown decision action: %s", d.Action)
 	}
+}
+
+// executeRetryNode transitions a READY node (after retryable failure) back to RUNNING.
+// It uses a new session to distinguish retry attempts.
+func (r *Reconciler) executeRetryNode(ctx context.Context, workflowID string, d domain.Decision) error {
+	ns, err := r.stateStore.GetNodeState(ctx, d.NodeID)
+	if err != nil {
+		return fmt.Errorf("retry node: get state for %s: %w", d.NodeID, err)
+	}
+
+	if ns.Status != domain.NodeStatusReady || ns.RetryCount == 0 {
+		slog.Debug("retry node: node not in retryable state, skipping",
+			"node", d.NodeID,
+			"status", ns.Status,
+			"retry_count", ns.RetryCount,
+		)
+		return nil
+	}
+
+	sessionID := fmt.Sprintf("sess-%s-%d", d.NodeID, ns.RetryCount+1)
+
+	payload, _ := json.Marshal(domain.NodeStarted{
+		NodeID:     d.NodeID,
+		WorkflowID: workflowID,
+		SessionID:  sessionID,
+	})
+
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-ns-%s-%d", d.NodeID, time.Now().UnixNano()),
+		Type:     store.EventNodeStarted,
+		StreamID: "node-" + d.NodeID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{event})
+	if err != nil {
+		return fmt.Errorf("retry node: append NODE_STARTED for %s: %w", d.NodeID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("retry node: apply NODE_STARTED for %s: %w", d.NodeID, err)
+	}
+
+	slog.Info("node retried",
+		"workflow", workflowID,
+		"node", d.NodeID,
+		"session", sessionID,
+		"attempt", ns.RetryCount+1,
+		"reason", d.Reason,
+	)
+	return nil
+}
+
+// executeResumeNode transitions a READY node (after human approval) back to RUNNING.
+func (r *Reconciler) executeResumeNode(ctx context.Context, workflowID string, d domain.Decision) error {
+	ns, err := r.stateStore.GetNodeState(ctx, d.NodeID)
+	if err != nil {
+		return fmt.Errorf("resume node: get state for %s: %w", d.NodeID, err)
+	}
+
+	if ns.Status != domain.NodeStatusReady {
+		slog.Debug("resume node: node not ready, skipping",
+			"node", d.NodeID,
+			"status", ns.Status,
+		)
+		return nil
+	}
+
+	// Reuse the existing session ID if available, otherwise create new.
+	sessionID := ns.SessionID
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("sess-%s-%d", d.NodeID, time.Now().UnixNano())
+	}
+
+	payload, _ := json.Marshal(domain.NodeStarted{
+		NodeID:     d.NodeID,
+		WorkflowID: workflowID,
+		SessionID:  sessionID,
+	})
+
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-ns-%s-%d", d.NodeID, time.Now().UnixNano()),
+		Type:     store.EventNodeStarted,
+		StreamID: "node-" + d.NodeID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{event})
+	if err != nil {
+		return fmt.Errorf("resume node: append NODE_STARTED for %s: %w", d.NodeID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("resume node: apply NODE_STARTED for %s: %w", d.NodeID, err)
+	}
+
+	slog.Info("node resumed",
+		"workflow", workflowID,
+		"node", d.NodeID,
+		"session", sessionID,
+		"reason", d.Reason,
+	)
+	return nil
+}
+
+// executePauseNode transitions a RUNNING node to WAITING for human input.
+func (r *Reconciler) executePauseNode(ctx context.Context, workflowID string, d domain.Decision) error {
+	ns, err := r.stateStore.GetNodeState(ctx, d.NodeID)
+	if err != nil {
+		return fmt.Errorf("pause node: get state for %s: %w", d.NodeID, err)
+	}
+
+	if ns.Status != domain.NodeStatusRunning {
+		slog.Debug("pause node: node not running, skipping",
+			"node", d.NodeID,
+			"status", ns.Status,
+		)
+		return nil
+	}
+
+	payload, _ := json.Marshal(domain.NodeWaiting{
+		NodeID:     d.NodeID,
+		WorkflowID: workflowID,
+		SessionID:  ns.SessionID,
+		Reason:     d.Reason,
+		Prompt:     "Human approval required for node " + d.NodeID,
+	})
+
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-nw-%s-%d", d.NodeID, time.Now().UnixNano()),
+		Type:     store.EventNodeWaiting,
+		StreamID: "node-" + d.NodeID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{event})
+	if err != nil {
+		return fmt.Errorf("pause node: append NODE_WAITING for %s: %w", d.NodeID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("pause node: apply NODE_WAITING for %s: %w", d.NodeID, err)
+	}
+
+	slog.Info("node paused for human approval",
+		"workflow", workflowID,
+		"node", d.NodeID,
+		"gate", ns.Gate,
+		"reason", d.Reason,
+	)
+	return nil
 }
 
 // executeStartNode transitions a node from PENDING/READY to RUNNING.

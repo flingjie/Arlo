@@ -40,11 +40,11 @@ func TestStartInstance(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	adapter := &mockAdapter{}
-	mgr.RegisterAdapter("claude-code", adapter)
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, adapter)
 
 	inst, err := mgr.StartInstance(ctx, RuntimeSpec{
 		InstanceID:  "inst-1",
-		Type:        "claude-code",
+		Type:        domain.RuntimeProviderClaudeCode,
 		SessionID:   "sess-1",
 		WorkspaceID: "ws-1",
 		SlotID:      "slot-1",
@@ -69,7 +69,7 @@ func TestStartInstanceUnknownType(t *testing.T) {
 
 	_, err := mgr.StartInstance(ctx, RuntimeSpec{
 		InstanceID: "inst-1",
-		Type:       "unknown-runtime",
+		Type:       domain.RuntimeProvider("unknown-runtime"),
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown type")
@@ -80,14 +80,14 @@ func TestStartInstanceUnknownType(t *testing.T) {
 func TestStartInstancePrepareError(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
-	mgr.RegisterAdapter("claude-code", &mockAdapter{
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{
 		prepareErr: errors.New("claude not installed"),
 	})
 
 	t.Run("prepare fails", func(t *testing.T) {
 		inst, err := mgr.StartInstance(ctx, RuntimeSpec{
 			InstanceID: "inst-1",
-			Type:       "claude-code",
+			Type:       domain.RuntimeProviderClaudeCode,
 		})
 		if err == nil {
 			t.Fatal("expected error from Prepare")
@@ -104,11 +104,11 @@ func TestStopInstance(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 	adapter := &mockAdapter{}
-	mgr.RegisterAdapter("claude-code", adapter)
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, adapter)
 
 	inst, _ := mgr.StartInstance(ctx, RuntimeSpec{
 		InstanceID: "inst-1",
-		Type:       "claude-code",
+		Type:       domain.RuntimeProviderClaudeCode,
 	})
 
 	err := mgr.StopInstance(ctx, inst.ID)
@@ -124,11 +124,11 @@ func TestStopInstance(t *testing.T) {
 func TestGetInstance(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
-	mgr.RegisterAdapter("claude-code", &mockAdapter{})
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
 
 	inst, _ := mgr.StartInstance(ctx, RuntimeSpec{
 		InstanceID: "inst-1",
-		Type:       "claude-code",
+		Type:       domain.RuntimeProviderClaudeCode,
 	})
 
 	retrieved, err := mgr.GetInstance(ctx, inst.ID)

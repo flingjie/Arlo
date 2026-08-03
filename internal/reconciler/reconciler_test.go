@@ -60,7 +60,8 @@ func seedWorkflow(t *testing.T, es *store.SQLiteStore, ss *state.InMemoryStateSt
 	// Create node events for each node.
 	for _, n := range graph.Nodes {
 		appendEvent(t, es, "node-"+n.ID, store.EventNodeCreated, domain.NodeCreated{
-			NodeID: n.ID, WorkflowID: wfID, SkillName: n.SkillRef.Name, Runtime: n.Runtime.Provider,
+			NodeID: n.ID, WorkflowID: wfID, SkillName: n.SkillRef.Name,
+			Runtime: string(n.Runtime.Provider), DependsOn: n.DependsOn, Gate: string(n.Gate),
 		})
 	}
 
@@ -438,7 +439,7 @@ func TestReconcileWithoutGraph(t *testing.T) {
 	})
 	for _, n := range graph.Nodes {
 		appendEvent(t, es, "node-"+n.ID, store.EventNodeCreated, domain.NodeCreated{
-			NodeID: n.ID, WorkflowID: wfID, SkillName: n.SkillRef.Name, Runtime: n.Runtime.Provider,
+			NodeID: n.ID, WorkflowID: wfID, SkillName: n.SkillRef.Name, Runtime: string(n.Runtime.Provider), DependsOn: n.DependsOn, Gate: string(n.Gate),
 		})
 	}
 	ss.Rebuild(ctx)
@@ -491,3 +492,372 @@ nodes:
 policy:
   max_concurrent_nodes: 1
 `
+
+// ── Integration Tests for New Decision Types ─────
+
+// TestReconcilePauseNode verifies the reconciler pauses a gated RUNNING node.
+func TestReconcilePauseNode(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start analyze (no deps).
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Complete analyze → implement starts.
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	appendEvent(t, es, "node-analyze", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "analyze", SessionID: ns.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Complete implement → review starts and has gate=human_approval.
+	ns2, _ := ss.GetNodeState(ctx, "implement")
+	appendEvent(t, es, "node-implement", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "implement", SessionID: ns2.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Verify review is RUNNING (it was started).
+	review, _ := ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusRunning {
+		t.Fatalf("review status = %s after start, want RUNNING", review.Status)
+	}
+
+	// Now reconcile again — engine should detect review has a gate and emit PAUSE_NODE.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// review should now be WAITING (paused for human approval).
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusWaiting {
+		t.Errorf("review status = %s after pause, want WAITING", review.Status)
+	}
+}
+
+// TestReconcileResumeNode verifies resume after human approval.
+func TestReconcileResumeNode(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start analyze.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Complete analyze and implement so review can start.
+	for _, nodeID := range []string{"analyze", "implement"} {
+		ns, _ := ss.GetNodeState(ctx, nodeID)
+		// Start the node if not already running.
+		if ns.Status != domain.NodeStatusRunning {
+			appendEvent(t, es, "node-"+nodeID, store.EventNodeStarted, domain.NodeStarted{
+				NodeID: nodeID, SessionID: "sess-" + nodeID,
+			})
+			ss.Rebuild(ctx)
+		}
+		appendEvent(t, es, "node-"+nodeID, store.EventNodeCompleted, domain.NodeCompleted{
+			NodeID: nodeID, SessionID: "sess-" + nodeID,
+		})
+	}
+	ss.Rebuild(ctx)
+
+	// Start review (needs to be RUNNING first to get paused).
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	review, _ := ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusRunning {
+		// If not running yet, force it to RUNNING via event.
+		appendEvent(t, es, "node-review", store.EventNodeStarted, domain.NodeStarted{
+			NodeID: "review", SessionID: "sess-review",
+		})
+		ss.Rebuild(ctx)
+	}
+
+	// Pause review (gate=human_approval in YAML) → PAUSE_NODE decision.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusWaiting {
+		t.Fatalf("review should be WAITING after pause, got %s", review.Status)
+	}
+
+	// Human approves → status becomes READY.
+	appendEvent(t, es, "node-review", store.EventHumanInputReceived, domain.HumanInputReceived{
+		NodeID: "review", WorkflowID: wfID, SessionID: review.SessionID, Decision: "approve",
+	})
+	ss.Rebuild(ctx)
+
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusReady {
+		t.Fatalf("review should be READY after approval, got %s", review.Status)
+	}
+
+	// Reconcile — review should get RESUME_NODE (READY, retry_count == 0).
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusRunning {
+		t.Errorf("review status = %s after resume, want RUNNING", review.Status)
+	}
+}
+
+// TestReconcileRetryNode verifies retry after retryable failure.
+func TestReconcileRetryNode(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start analyze.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Make it fail retryably → READY with retry_count=1.
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	appendEvent(t, es, "node-analyze", store.EventNodeFailed, domain.NodeFailed{
+		NodeID: "analyze", SessionID: ns.SessionID, Reason: "OOM", Retryable: true,
+	})
+	ss.Rebuild(ctx)
+
+	// Reconcile — should get RETRY_NODE.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ = ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusRunning {
+		t.Errorf("analyze status = %s after retry, want RUNNING", ns.Status)
+	}
+}
+
+// TestReconcileWithAnnotations verifies annotations survive rebuild.
+func TestReconcileWithAnnotations(t *testing.T) {
+	ctx := context.Background()
+	_, es, ss, eng := newTestReconciler(t)
+	r := New(ss, es, eng, nil, nil)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Append an annotation event.
+	appendEvent(t, es, "node-analyze", store.EventNodeAnnotated, domain.NodeAnnotated{
+		NodeID: "analyze", WorkflowID: wfID, Key: "human_rating", Value: "good",
+	})
+	appendEvent(t, es, "node-analyze", store.EventNodeAnnotated, domain.NodeAnnotated{
+		NodeID: "analyze", WorkflowID: wfID, Key: "accepted", Value: "true",
+	})
+	ss.Rebuild(ctx)
+
+	// Verify annotations are present.
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if len(ns.Annotations) != 2 {
+		t.Fatalf("expected 2 annotations, got %d", len(ns.Annotations))
+	}
+	if ns.Annotations[0].Key != "human_rating" || ns.Annotations[0].Value != "good" {
+		t.Errorf("annotation[0] = %s=%s, want human_rating=good", ns.Annotations[0].Key, ns.Annotations[0].Value)
+	}
+
+	// Rebuild again — annotations should survive.
+	ss.Rebuild(ctx)
+	ns, _ = ss.GetNodeState(ctx, "analyze")
+	if len(ns.Annotations) != 2 {
+		t.Errorf("annotations lost after rebuild: got %d, want 2", len(ns.Annotations))
+	}
+}
+
+// TestReconcileMetricsFlow verifies metrics snapshots accumulate in node state.
+func TestReconcileMetricsFlow(t *testing.T) {
+	ctx := context.Background()
+	_, es, ss, eng := newTestReconciler(t)
+	r := New(ss, es, eng, nil, nil)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start analyze (needed so node exists in projection).
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Append heartbeat and metrics events.
+	appendEvent(t, es, "node-analyze", store.EventNodeHeartbeat, domain.NodeHeartbeat{
+		NodeID: "analyze", WorkflowID: wfID, SessionID: "sess-1", Status: "RUNNING",
+	})
+	appendEvent(t, es, "node-analyze", store.EventMetricsSnapshot, domain.MetricsSnapshot{
+		NodeID: "analyze", WorkflowID: wfID, SessionID: "sess-1",
+		TokensIn: 500, TokensOut: 200, ToolCalls: 3, CostUSD: 0.015,
+	})
+	appendEvent(t, es, "node-analyze", store.EventMetricsSnapshot, domain.MetricsSnapshot{
+		NodeID: "analyze", WorkflowID: wfID, SessionID: "sess-1",
+		TokensIn: 300, TokensOut: 150, ToolCalls: 2, CostUSD: 0.010,
+	})
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if ns.Metrics.TokensIn != 800 {
+		t.Errorf("TokensIn = %d, want 800", ns.Metrics.TokensIn)
+	}
+	if ns.Metrics.TokensOut != 350 {
+		t.Errorf("TokensOut = %d, want 350", ns.Metrics.TokensOut)
+	}
+	if ns.Metrics.ToolCalls != 5 {
+		t.Errorf("ToolCalls = %d, want 5", ns.Metrics.ToolCalls)
+	}
+	if ns.Metrics.CostUSD != 0.025 {
+		t.Errorf("CostUSD = %.4f, want 0.0250", ns.Metrics.CostUSD)
+	}
+}
+
+// TestReconcileFullWorkflowLifecycle verifies complete end-to-end state machine chain.
+func TestReconcileFullWorkflowLifecycle(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Phase 1: START analyze → RUNNING.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+	analyze, _ := ss.GetNodeState(ctx, "analyze")
+	if analyze.Status != domain.NodeStatusRunning {
+		t.Fatalf("phase 1: analyze = %s, want RUNNING", analyze.Status)
+	}
+
+	// Phase 2: Complete analyze → implement becomes STARTABLE.
+	appendEvent(t, es, "node-analyze", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "analyze", SessionID: analyze.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	implement, _ := ss.GetNodeState(ctx, "implement")
+	if implement.Status != domain.NodeStatusRunning {
+		t.Fatalf("phase 2: implement = %s, want RUNNING", implement.Status)
+	}
+
+	// Phase 3: RETRY — implement fails retryably.
+	appendEvent(t, es, "node-implement", store.EventNodeFailed, domain.NodeFailed{
+		NodeID: "implement", SessionID: implement.SessionID, Reason: "timeout", Retryable: true,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	implement, _ = ss.GetNodeState(ctx, "implement")
+	if implement.Status != domain.NodeStatusRunning {
+		t.Fatalf("phase 3: implement after retry = %s, want RUNNING", implement.Status)
+	}
+	if implement.RetryCount < 1 {
+		t.Errorf("phase 3: retry_count = %d, want >= 1", implement.RetryCount)
+	}
+
+	// Phase 4: Complete implement → review starts (with gate).
+	appendEvent(t, es, "node-implement", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "implement", SessionID: implement.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID) // starts review
+	ss.Rebuild(ctx)
+
+	review, _ := ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusRunning {
+		t.Fatalf("phase 4: review = %s after start, want RUNNING", review.Status)
+	}
+
+	// Phase 5: PAUSE — review has gate, should pause.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusWaiting {
+		t.Fatalf("phase 5: review = %s after pause, want WAITING", review.Status)
+	}
+
+	// Phase 6: Human approves (human input → READY) → RESUME.
+	appendEvent(t, es, "node-review", store.EventHumanInputReceived, domain.HumanInputReceived{
+		NodeID: "review", WorkflowID: wfID, SessionID: review.SessionID, Decision: "approve",
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusRunning {
+		t.Fatalf("phase 6: review = %s after resume, want RUNNING", review.Status)
+	}
+
+	// Phase 7: Complete review → workflow completes.
+	appendEvent(t, es, "node-review", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "review", SessionID: review.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	wf, _ := ss.GetWorkflow(ctx, wfID)
+	if wf.Status != domain.WorkflowStatusCompleted {
+		t.Fatalf("phase 7: workflow = %s, want COMPLETED", wf.Status)
+	}
+}
+
+// TestReconcileMultipleWorkflowsParallel verifies independent workflows don't interfere.
+func TestReconcileMultipleWorkflowsParallel(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	yaml1 := `name: wf1
+version: 1
+nodes:
+  - id: a1
+    skill: plan
+    runtime:
+      provider: claude-code
+    retry:
+      max_retries: 1
+      backoff: 10s
+`
+	yaml2 := `name: wf2
+version: 1
+nodes:
+  - id: a2
+    skill: code
+    runtime:
+      provider: claude-code
+    retry:
+      max_retries: 1
+      backoff: 10s
+`
+
+	_, wf1 := seedWorkflow(t, es, ss, r, eng, yaml1, "t1")
+	_, wf2 := seedWorkflow(t, es, ss, r, eng, yaml2, "t2")
+
+	// Start both workflows.
+	r.Reconcile(ctx, wf1)
+	r.Reconcile(ctx, wf2)
+	ss.Rebuild(ctx)
+
+	// Complete wf1.
+	ns1, _ := ss.GetNodeState(ctx, "a1")
+	appendEvent(t, es, "node-a1", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "a1", SessionID: ns1.SessionID,
+	})
+	ss.Rebuild(ctx)
+	r.Reconcile(ctx, wf1)
+	ss.Rebuild(ctx)
+
+	wf1State, _ := ss.GetWorkflow(ctx, wf1)
+	if wf1State.Status != domain.WorkflowStatusCompleted {
+		t.Errorf("wf1 = %s, want COMPLETED", wf1State.Status)
+	}
+
+	// wf2 should still be RUNNING.
+	ns2, _ := ss.GetNodeState(ctx, "a2")
+	if ns2.Status != domain.NodeStatusRunning {
+		t.Errorf("a2 = %s, want RUNNING", ns2.Status)
+	}
+}

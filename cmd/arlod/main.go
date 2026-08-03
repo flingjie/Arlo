@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
+	"github.com/lingjiefan/arlo/internal/domain"
 	"github.com/lingjiefan/arlo/internal/reconciler"
 	"github.com/lingjiefan/arlo/internal/runtime"
 	"github.com/lingjiefan/arlo/internal/service"
@@ -69,7 +70,7 @@ func main() {
 
 	// ── Step 6: Runtime & Workspace ──────────────
 	rtMgr := runtime.NewManager()
-	rtMgr.RegisterAdapter("claude-code", runtime.NewClaudeAdapter())
+	rtMgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, runtime.NewClaudeAdapter())
 
 	wsMgr := workspace.NewManager()
 	_ = wsMgr // workspace provider registered lazily on first use
