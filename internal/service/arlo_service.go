@@ -100,7 +100,12 @@ func (s *ArloService) CreateTask(ctx context.Context, req *arlov1.CreateTaskRequ
 			ID:   fmt.Sprintf("evt-node-%s-%s", n.ID, wfID),
 			Type: store.EventNodeCreated,
 			Payload: marshalJSON(domain.NodeCreated{
-				NodeID: n.ID, WorkflowID: wfID, SkillName: n.SkillRef.Name, Runtime: n.Runtime.Provider,
+				NodeID:     n.ID,
+				WorkflowID: wfID,
+				SkillName:  n.SkillRef.Name,
+				Runtime:    n.Runtime.Provider,
+				DependsOn:  n.DependsOn,
+				Gate:       string(n.Gate),
 			}),
 		}}); err != nil {
 			return nil, status.Errorf(codes.Internal, "seed node event: %v", err)
