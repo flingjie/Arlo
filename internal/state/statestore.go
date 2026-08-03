@@ -55,6 +55,11 @@ type StateStore interface {
 	// Rebuild replays all events from the Event Store to reconstruct projections.
 	// Called on startup. Blocks until all events are processed.
 	Rebuild(ctx context.Context) error
+
+	// Apply updates projections with a single newly-appended event.
+	// This is the incremental path — after an event is appended to the Event
+	// Store, call Apply to keep projections in sync without a full Rebuild.
+	Apply(event store.Event) error
 }
 
 // ErrNotFound is returned when a workflow or node is not found.

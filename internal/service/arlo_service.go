@@ -370,17 +370,26 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 	case "approve", "reject":
 		// Record human input for a waiting node.
 		nodeID := req.Target
-		_, err := s.eventStore.Append(ctx, "node-"+nodeID, []store.Event{{
+
+		// Look up the node to find its workflow and session.
+		ns, nsErr := s.stateStore.GetNodeState(ctx, nodeID)
+		if nsErr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: fmt.Sprintf("node %s not found: %v", nodeID, nsErr)}, nil
+		}
+
+		_, gerr := s.eventStore.Append(ctx, "node-"+nodeID, []store.Event{{
 			ID:   fmt.Sprintf("evt-human-%d", time.Now().UnixNano()),
 			Type: store.EventHumanInputReceived,
 			Payload: marshalJSON(domain.HumanInputReceived{
-				NodeID:   nodeID,
-				Decision: req.Command,
-				Input:    req.Input,
+				NodeID:     nodeID,
+				WorkflowID: ns.WorkflowID,
+				SessionID:  ns.SessionID,
+				Decision:   req.Command,
+				Input:      req.Input,
 			}),
 		}})
-		if err != nil {
-			return &arlov1.CommandResponse{Success: false, Message: err.Error()}, nil
+		if gerr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: gerr.Error()}, nil
 		}
 		s.stateStore.Rebuild(ctx)
 		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("node %s %sd", nodeID, req.Command)}, nil

@@ -102,6 +102,33 @@ func (c *Client) SubscribeEvents(workflowID string) tea.Cmd {
 	}
 }
 
+// ExecuteCommand sends a human-in-the-loop command (approve/reject/cancel_task).
+func (c *Client) ExecuteCommand(command, target, input string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		resp, err := c.api.ExecuteCommand(ctx, &arlov1.CommandRequest{
+			Command: command,
+			Target:  target,
+			Input:   input,
+		})
+		if err != nil {
+			return commandResultMsg{err: err}
+		}
+		return commandResultMsg{
+			success: resp.Success,
+			message: resp.Message,
+		}
+	}
+}
+
+type commandResultMsg struct {
+	success bool
+	message string
+	err     error
+}
+
 type eventMsg struct {
 	event *arlov1.Event
 }

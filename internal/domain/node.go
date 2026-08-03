@@ -21,6 +21,7 @@ const (
 // built from event projections.
 type NodeState struct {
 	NodeID      string            `json:"node_id"`
+	WorkflowID  string            `json:"workflow_id"`
 	Status      NodeStatus        `json:"status"`
 	SessionID   string            `json:"session_id,omitempty"`
 	RuntimeID   string            `json:"runtime_id,omitempty"`

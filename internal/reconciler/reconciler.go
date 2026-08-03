@@ -177,17 +177,26 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 
 	// Append NODE_STARTED event.
 	payload, _ := json.Marshal(domain.NodeStarted{
-		NodeID:    d.NodeID,
-		SessionID: sessionID,
+		NodeID:     d.NodeID,
+		WorkflowID: workflowID,
+		SessionID:  sessionID,
 	})
 
-	_, err = r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{{
-		ID:      fmt.Sprintf("evt-ns-%s-%d", d.NodeID, time.Now().UnixNano()),
-		Type:    store.EventNodeStarted,
-		Payload: payload,
-	}})
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-ns-%s-%d", d.NodeID, time.Now().UnixNano()),
+		Type:     store.EventNodeStarted,
+		StreamID: "node-" + d.NodeID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{event})
 	if err != nil {
 		return fmt.Errorf("start node: append NODE_STARTED for %s: %w", d.NodeID, err)
+	}
+	// Keep projections in sync incrementally — the projection needs
+	// the event's Type and Payload. Position is set from Append's return.
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("start node: apply NODE_STARTED for %s: %w", d.NodeID, err)
 	}
 
 	slog.Info("node started",
@@ -238,13 +247,19 @@ func (r *Reconciler) executeCompleteWorkflow(ctx context.Context, workflowID str
 
 	payload, _ := json.Marshal(domain.TaskCompleted{TaskID: workflowID})
 
-	_, err := r.eventStore.Append(ctx, "workflow-"+workflowID, []store.Event{{
-		ID:      fmt.Sprintf("evt-wc-%s-%d", workflowID, time.Now().UnixNano()),
-		Type:    store.EventTaskCompleted,
-		Payload: payload,
-	}})
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-wc-%s-%d", workflowID, time.Now().UnixNano()),
+		Type:     store.EventTaskCompleted,
+		StreamID: "workflow-" + workflowID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "workflow-"+workflowID, []store.Event{event})
 	if err != nil {
 		return fmt.Errorf("complete workflow: append for %s: %w", workflowID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("complete workflow: apply for %s: %w", workflowID, err)
 	}
 
 	slog.Info("workflow completed", "workflow", workflowID, "reason", d.Reason)
@@ -265,13 +280,19 @@ func (r *Reconciler) executeFailWorkflow(ctx context.Context, workflowID string,
 		Reason: d.Reason,
 	})
 
-	_, err := r.eventStore.Append(ctx, "workflow-"+workflowID, []store.Event{{
-		ID:      fmt.Sprintf("evt-wf-%s-%d", workflowID, time.Now().UnixNano()),
-		Type:    store.EventTaskFailed,
-		Payload: payload,
-	}})
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-wf-%s-%d", workflowID, time.Now().UnixNano()),
+		Type:     store.EventTaskFailed,
+		StreamID: "workflow-" + workflowID,
+		Payload:  payload,
+	}
+	positions, err := r.eventStore.Append(ctx, "workflow-"+workflowID, []store.Event{event})
 	if err != nil {
 		return fmt.Errorf("fail workflow: append for %s: %w", workflowID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("fail workflow: apply for %s: %w", workflowID, err)
 	}
 
 	slog.Info("workflow failed", "workflow", workflowID, "reason", d.Reason)

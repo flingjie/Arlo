@@ -57,32 +57,36 @@ type NodeCreated struct {
 
 // NodeStarted is the payload for NODE_STARTED events.
 type NodeStarted struct {
-	NodeID    string `json:"node_id"`
-	SessionID string `json:"session_id"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	SessionID  string `json:"session_id"`
 }
 
 // NodeWaiting is the payload for NODE_WAITING events.
 // Emitted when a node is blocked on human approval.
 type NodeWaiting struct {
-	NodeID    string `json:"node_id"`
-	SessionID string `json:"session_id"`
-	Reason    string `json:"reason"`
-	Prompt    string `json:"prompt"` // what the agent is asking
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	SessionID  string `json:"session_id"`
+	Reason     string `json:"reason"`
+	Prompt     string `json:"prompt"` // what the agent is asking
 }
 
 // NodeCompleted is the payload for NODE_COMPLETED events.
 type NodeCompleted struct {
-	NodeID    string            `json:"node_id"`
-	SessionID string            `json:"session_id"`
-	Output    map[string]string `json:"output"` // artifact name → artifact ID
+	NodeID     string            `json:"node_id"`
+	WorkflowID string            `json:"workflow_id"`
+	SessionID  string            `json:"session_id"`
+	Output     map[string]string `json:"output"` // artifact name → artifact ID
 }
 
 // NodeFailed is the payload for NODE_FAILED events.
 type NodeFailed struct {
-	NodeID    string `json:"node_id"`
-	SessionID string `json:"session_id"`
-	Reason    string `json:"reason"`
-	Retryable bool   `json:"retryable"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	SessionID  string `json:"session_id"`
+	Reason     string `json:"reason"`
+	Retryable  bool   `json:"retryable"`
 }
 
 // ── Runtime Payloads ──────────────────────────────
@@ -164,8 +168,9 @@ type HumanApprovalRequired struct {
 
 // HumanInputReceived is the payload for HUMAN_INPUT_RECEIVED events.
 type HumanInputReceived struct {
-	NodeID    string `json:"node_id"`
-	SessionID string `json:"session_id"`
-	Decision  string `json:"decision"` // "approved", "rejected", "custom"
-	Input     string `json:"input,omitempty"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	SessionID  string `json:"session_id"`
+	Decision   string `json:"decision"` // "approved", "rejected", "custom"
+	Input      string `json:"input,omitempty"`
 }

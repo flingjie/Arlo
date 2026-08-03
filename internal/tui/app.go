@@ -246,6 +246,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commandMsg:
 		m.cmdMsg = msg.output
 
+	case commandResultMsg:
+		if msg.err != nil {
+			m.cmdMsg = fmt.Sprintf("command failed: %v", msg.err)
+		} else if msg.success {
+			m.cmdMsg = msg.message
+			cmds = append(cmds, m.client.GetSnapshot(m.workflow))
+		} else {
+			m.cmdMsg = fmt.Sprintf("command rejected: %s", msg.message)
+		}
+
 	case attachMsg:
 		m.cmdMsg = fmt.Sprintf("attach to session %s (node %s) — use: arlo attach %s",
 			msg.sessionID, msg.nodeID, msg.sessionID)
@@ -387,7 +397,7 @@ func (m *Model) renderCommandBar(width int) string {
 		m.cmdMsg = ""
 	}
 
-	left := GrayStyle.Render(":attach :retry :logs :filter :help :quit")
+	left := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :f[ilter] :rf[resh] :h[elp] :q[uit]")
 	right := ""
 	if msg != "" {
 		right = WhiteStyle.Render(msg)

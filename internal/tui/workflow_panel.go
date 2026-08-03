@@ -97,19 +97,11 @@ func (p *WorkflowPanel) View(width int) string {
 		return PanelStyle.Width(width).Render(sb.String())
 	}
 
-	// Build a root set: nodes with no dependencies are rendered first.
-	hasDep := make(map[string]bool)
-	for _, n := range p.nodes {
-		for _, dep := range n.DependsOn {
-			hasDep[dep] = true
-		}
-	}
-
+	// Build a root set: nodes with no dependencies are roots.
 	for i, n := range p.nodes {
-		if hasDep[n.NodeId] {
-			continue // Will be rendered as child.
+		if len(n.DependsOn) == 0 {
+			p.renderNode(&sb, n, 0, i)
 		}
-		p.renderNode(&sb, n, 0, i)
 	}
 
 	return PanelStyle.Width(width).Render(sb.String())

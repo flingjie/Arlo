@@ -133,16 +133,29 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 		t = time.Now()
 	}
 
+	// Extract node ID from stream or payload.
+	nodeID := extractNodeID(event)
+
 	switch event.Type {
 	case "NODE_STARTED":
-		return NodeStartedItem{Timestamp: t}
+		return NodeStartedItem{Timestamp: t, NodeID: nodeID}
 	case "NODE_COMPLETED":
-		return NodeCompletedItem{Timestamp: t}
+		return NodeCompletedItem{Timestamp: t, NodeID: nodeID}
 	case "NODE_FAILED":
-		return NodeFailedItem{Timestamp: t}
+		return NodeFailedItem{Timestamp: t, NodeID: nodeID}
 	case "NODE_WAITING":
-		return NodeWaitingItem{Timestamp: t}
+		return NodeWaitingItem{Timestamp: t, NodeID: nodeID}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
+}
+
+// extractNodeID extracts the node ID from the event's StreamId.
+// StreamId format: "node-{nodeID}".
+func extractNodeID(event *arlov1.Event) string {
+	sid := event.StreamId
+	if len(sid) > 5 && sid[:5] == "node-" {
+		return sid[5:]
+	}
+	return ""
 }

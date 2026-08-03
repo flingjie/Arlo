@@ -39,6 +39,8 @@ func NewCommandRegistry() *CommandRegistry {
 	r.Register(&FilterCommand{})
 	r.Register(&RefreshCommand{})
 	r.Register(&AttachCommand{})
+	r.Register(&ApproveCommand{})
+	r.Register(&RejectCommand{})
 	return r
 }
 
@@ -165,4 +167,55 @@ func (c *AttachCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
 type attachMsg struct {
 	nodeID    string
 	sessionID string
+}
+
+// ── ApproveCommand ──────────────────────────────────
+
+type ApproveCommand struct{}
+
+func (c *ApproveCommand) Name() string        { return "approve" }
+func (c *ApproveCommand) Aliases() []string   { return []string{"ap"} }
+func (c *ApproveCommand) Description() string { return "Approve a node waiting for human input" }
+func (c *ApproveCommand) Usage() string       { return ":approve [<node-id>]" }
+
+func (c *ApproveCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
+	nodeID := resolveNodeID(args, ctx)
+	if nodeID == "" {
+		return func() tea.Msg { return commandMsg{output: "no node selected; usage: :approve <node-id>"} }
+	}
+	return tea.Batch(
+		ctx.Client.ExecuteCommand("approve", nodeID, ""),
+		func() tea.Msg { return commandMsg{output: fmt.Sprintf("approving node %s...", nodeID)} },
+	)
+}
+
+// ── RejectCommand ──────────────────────────────────
+
+type RejectCommand struct{}
+
+func (c *RejectCommand) Name() string        { return "reject" }
+func (c *RejectCommand) Aliases() []string   { return []string{"rj"} }
+func (c *RejectCommand) Description() string { return "Reject a node waiting for human input" }
+func (c *RejectCommand) Usage() string       { return ":reject [<node-id>]" }
+
+func (c *RejectCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
+	nodeID := resolveNodeID(args, ctx)
+	if nodeID == "" {
+		return func() tea.Msg { return commandMsg{output: "no node selected; usage: :reject <node-id>"} }
+	}
+	return tea.Batch(
+		ctx.Client.ExecuteCommand("reject", nodeID, ""),
+		func() tea.Msg { return commandMsg{output: fmt.Sprintf("rejecting node %s...", nodeID)} },
+	)
+}
+
+// resolveNodeID returns nodeID from args, or falls back to the currently selected node.
+func resolveNodeID(args []string, ctx *AppContext) string {
+	if len(args) >= 1 {
+		return args[0]
+	}
+	if ctx.UIState != nil && ctx.UIState.SelectedNode != "" {
+		return ctx.UIState.SelectedNode
+	}
+	return ""
 }

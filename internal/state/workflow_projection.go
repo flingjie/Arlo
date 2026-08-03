@@ -176,6 +176,27 @@ func (ss *InMemoryStateStore) Rebuild(ctx context.Context) error {
 	return nil
 }
 
+// Apply updates projections with a single newly-appended event.
+// This is the incremental path — use it after appending an event to the Event
+// Store to keep projections in sync without a full Rebuild.
+func (ss *InMemoryStateStore) Apply(event store.Event) error {
+	// Apply to all registered projections.
+	for _, proj := range ss.projections {
+		if err := proj.Apply(event); err != nil {
+			return fmt.Errorf("apply event %s (pos %d): %w", event.ID, event.Position, err)
+		}
+	}
+
+	// Recompute Children trees after every event — this is cheap for
+	// the expected volume of events in a single reconciliation tick.
+	ss.mu.Lock()
+	ss.rebuildTree()
+	ss.lastRebuiltPos = event.Position
+	ss.mu.Unlock()
+
+	return nil
+}
+
 // ── Internal: Projection helpers ───────────────────
 
 // rebuildTree computes Children from DependsOn for all nodes in all workflows.
@@ -327,10 +348,11 @@ func (p *workflowProjection) applyNodeCreated(event store.Event) error {
 	}
 
 	ns := domain.NodeState{
-		NodeID:    payload.NodeID,
-		Status:    domain.NodeStatusPending,
-		DependsOn: dependsOn,
-		Gate:      payload.Gate,
+		NodeID:     payload.NodeID,
+		WorkflowID: payload.WorkflowID,
+		Status:     domain.NodeStatusPending,
+		DependsOn:  dependsOn,
+		Gate:       payload.Gate,
 	}
 
 	wf := p.store.upsertWorkflow(payload.WorkflowID)
@@ -339,24 +361,44 @@ func (p *workflowProjection) applyNodeCreated(event store.Event) error {
 	return nil
 }
 
+// lookupNode finds the correct workflow and node for a node event.
+// Uses WorkflowID from the payload when available (exact match); falls back
+// to nodeIndex for backward compatibility with older events.
+func (p *workflowProjection) lookupNode(nodeID, workflowID string) (*domain.WorkflowState, *domain.NodeState, error) {
+	if workflowID == "" {
+		var ok bool
+		workflowID, ok = p.store.nodeIndex[nodeID]
+		if !ok {
+			return nil, nil, fmt.Errorf("node %s not found in index", nodeID)
+		}
+	}
+	wf, ok := p.store.workflows[workflowID]
+	if !ok {
+		return nil, nil, fmt.Errorf("workflow %s not found", workflowID)
+	}
+	ns, ok := wf.Nodes[nodeID]
+	if !ok {
+		return nil, nil, fmt.Errorf("node %s not found in workflow %s", nodeID, workflowID)
+	}
+	return wf, &ns, nil
+}
+
 func (p *workflowProjection) applyNodeStarted(event store.Event) error {
 	var payload domain.NodeStarted
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal NodeStarted: %w", err)
 	}
 
-	// Find the node by searching all workflows.
-	for _, wf := range p.store.workflows {
-		if ns, ok := wf.Nodes[payload.NodeID]; ok {
-			ns.Status = domain.NodeStatusRunning
-			ns.SessionID = payload.SessionID
-			now := time.Now()
-			ns.StartedAt = &now
-			wf.Nodes[payload.NodeID] = ns
-			return nil
-		}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeStarted: %w", err)
 	}
-	return fmt.Errorf("node %s not found for NodeStarted event", payload.NodeID)
+	ns.Status = domain.NodeStatusRunning
+	ns.SessionID = payload.SessionID
+	now := time.Now()
+	ns.StartedAt = &now
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
 }
 
 func (p *workflowProjection) applyNodeCompleted(event store.Event) error {
@@ -365,17 +407,16 @@ func (p *workflowProjection) applyNodeCompleted(event store.Event) error {
 		return fmt.Errorf("unmarshal NodeCompleted: %w", err)
 	}
 
-	for _, wf := range p.store.workflows {
-		if ns, ok := wf.Nodes[payload.NodeID]; ok {
-			ns.Status = domain.NodeStatusCompleted
-			ns.Output = payload.Output
-			now := time.Now()
-			ns.CompletedAt = &now
-			wf.Nodes[payload.NodeID] = ns
-			return nil
-		}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeCompleted: %w", err)
 	}
-	return fmt.Errorf("node %s not found for NodeCompleted event", payload.NodeID)
+	ns.Status = domain.NodeStatusCompleted
+	ns.Output = payload.Output
+	now := time.Now()
+	ns.CompletedAt = &now
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
 }
 
 func (p *workflowProjection) applyNodeFailed(event store.Event) error {
@@ -384,19 +425,18 @@ func (p *workflowProjection) applyNodeFailed(event store.Event) error {
 		return fmt.Errorf("unmarshal NodeFailed: %w", err)
 	}
 
-	for _, wf := range p.store.workflows {
-		if ns, ok := wf.Nodes[payload.NodeID]; ok {
-			if payload.Retryable {
-				ns.Status = domain.NodeStatusReady
-			} else {
-				ns.Status = domain.NodeStatusFailed
-			}
-			ns.RetryCount++
-			wf.Nodes[payload.NodeID] = ns
-			return nil
-		}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeFailed: %w", err)
 	}
-	return fmt.Errorf("node %s not found for NodeFailed event", payload.NodeID)
+	if payload.Retryable {
+		ns.Status = domain.NodeStatusReady
+	} else {
+		ns.Status = domain.NodeStatusFailed
+	}
+	ns.RetryCount++
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
 }
 
 func (p *workflowProjection) applyNodeWaiting(event store.Event) error {
@@ -405,14 +445,13 @@ func (p *workflowProjection) applyNodeWaiting(event store.Event) error {
 		return fmt.Errorf("unmarshal NodeWaiting: %w", err)
 	}
 
-	for _, wf := range p.store.workflows {
-		if ns, ok := wf.Nodes[payload.NodeID]; ok {
-			ns.Status = domain.NodeStatusWaiting
-			wf.Nodes[payload.NodeID] = ns
-			return nil
-		}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("NodeWaiting: %w", err)
 	}
-	return fmt.Errorf("node %s not found for NodeWaiting event", payload.NodeID)
+	ns.Status = domain.NodeStatusWaiting
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
 }
 
 func (p *workflowProjection) applyTaskCompleted(event store.Event) error {
@@ -467,17 +506,15 @@ func (p *workflowProjection) applyHumanInputReceived(event store.Event) error {
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal HumanInputReceived: %w", err)
 	}
-	// When human approves, the node should resume from WAITING to RUNNING.
-	for _, wf := range p.store.workflows {
-		if ns, ok := wf.Nodes[payload.NodeID]; ok {
-			if payload.Decision == "approve" {
-				ns.Status = domain.NodeStatusReady
-			} else {
-				ns.Status = domain.NodeStatusFailed
-			}
-			wf.Nodes[payload.NodeID] = ns
-			return nil
-		}
+	wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("HumanInputReceived: %w", err)
 	}
-	return fmt.Errorf("node %s not found for HumanInputReceived event", payload.NodeID)
+	if payload.Decision == "approve" {
+		ns.Status = domain.NodeStatusReady
+	} else {
+		ns.Status = domain.NodeStatusFailed
+	}
+	wf.Nodes[payload.NodeID] = *ns
+	return nil
 }
