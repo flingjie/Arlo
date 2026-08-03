@@ -207,79 +207,75 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 	}
 
 	// Find nodes ready to start: PENDING or READY status with all deps satisfied.
+	// startedNodes deduplicates: a node can only receive one START_NODE decision.
+	startedNodes := make(map[string]bool)
 	for _, ns := range state.Nodes {
 		if ns.Status != domain.NodeStatusPending && ns.Status != domain.NodeStatusReady {
 			continue
 		}
-
-		// Don't start WAITING nodes (they need human input).
-		if ns.Status == domain.NodeStatusWaiting {
-			continue
-		}
-
-		// Check dependencies using the original graph.
 		if !depsSatisfied(ns.NodeID, graph, state) {
 			continue
 		}
-
 		decisions = append(decisions, domain.Decision{
 			Action: domain.DecisionStartNode,
 			NodeID: ns.NodeID,
 			Reason: "dependencies satisfied",
 		})
+		startedNodes[ns.NodeID] = true
 	}
 
 	// Check for conditional transitions (v0.2).
-	// After all normal evaluations, check if any completed node has
-	// a Transition that should activate another node.
+	// Build node map once outside the loop (O(M) not O(N*M)).
+	nodeMap := buildNodeMap(graph)
 	for _, ns := range state.Nodes {
 		if ns.Status != domain.NodeStatusCompleted {
 			continue
 		}
-		nodeMap := buildNodeMap(graph)
 		node, ok := nodeMap[ns.NodeID]
 		if !ok {
 			continue
 		}
 		for _, tr := range node.Transitions {
-			if tr.When == "" || evaluateCondition(tr.When, ns) {
-				// Activate the target node by adding a pending entry.
-				targetState, exists := state.Nodes[tr.To]
-				if exists && targetState.Status == domain.NodeStatusPending {
-					decisions = append(decisions, domain.Decision{
-						Action: domain.DecisionStartNode,
-						NodeID: tr.To,
-						Reason: "conditional transition from " + ns.NodeID,
-					})
-				}
-				_ = targetState // used for checking existence
+			if tr.When != "" && !evaluateCondition(tr.When, ns) {
+				continue
 			}
+			if startedNodes[tr.To] {
+				continue // prevent duplicate with dep-satisfied start
+			}
+			targetState, exists := state.Nodes[tr.To]
+			if !exists {
+				continue
+			}
+			if targetState.Status != domain.NodeStatusPending && targetState.Status != domain.NodeStatusReady {
+				continue
+			}
+			decisions = append(decisions, domain.Decision{
+				Action: domain.DecisionStartNode,
+				NodeID: tr.To,
+				Reason: "conditional transition from " + ns.NodeID,
+			})
+			startedNodes[tr.To] = true
 		}
 	}
 
 	return decisions, nil
 }
 
+
 // buildNodeMap creates an ID→Node lookup from the graph.
 func buildNodeMap(graph *domain.ExecutableGraph) map[string]domain.ExecutableNode {
-	m := make(map[string]domain.ExecutableNode)
+	m := make(map[string]domain.ExecutableNode, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		m[n.ID] = n
 	}
 	return m
 }
 
+
 // evaluateCondition evaluates a simple expression against a node's output.
-// In v0.2, supports: "verdict != APPROVED", "verdict == APPROVED", and truthy checks.
+// In v0.2, supports: "verdict == APPROVED", "verdict != APPROVED", and truthy checks.
+// '==' is checked before '!=' to prevent the '!=' substring from matching '==' expressions.
 func evaluateCondition(expr string, ns domain.NodeState) bool {
-	// Simple evaluation: check if a key in Output doesn't equal a value.
-	if strings.Contains(expr, "!=") {
-		parts := strings.SplitN(expr, "!=", 2)
-		key := strings.TrimSpace(parts[0])
-		want := strings.TrimSpace(parts[1])
-		val, ok := ns.Output[key]
-		return !ok || val != want
-	}
 	if strings.Contains(expr, "==") {
 		parts := strings.SplitN(expr, "==", 2)
 		key := strings.TrimSpace(parts[0])
@@ -287,35 +283,35 @@ func evaluateCondition(expr string, ns domain.NodeState) bool {
 		val, ok := ns.Output[key]
 		return ok && val == want
 	}
-	// Default: truthy check — if the expression key exists in output.
+	if strings.Contains(expr, "!=") {
+		parts := strings.SplitN(expr, "!=", 2)
+		key := strings.TrimSpace(parts[0])
+		want := strings.TrimSpace(parts[1])
+		val, ok := ns.Output[key]
+		return !ok || val != want
+	}
 	_, ok := ns.Output[strings.TrimSpace(expr)]
 	return ok
 }
 
+
+// depsSatisfied checks whether all dependencies of a node are completed.
 // depsSatisfied checks whether all dependencies of a node are completed.
 func depsSatisfied(nodeID string, graph *domain.ExecutableGraph, state domain.WorkflowState) bool {
-	// Find the node in the graph to read its DependsOn.
-	nodeMap := make(map[string]domain.ExecutableNode)
-	for _, n := range graph.Nodes {
-		nodeMap[n.ID] = n
-	}
-
+	nodeMap := buildNodeMap(graph)
 	node, ok := nodeMap[nodeID]
 	if !ok {
 		return false
 	}
-
 	for _, dep := range node.DependsOn {
 		depState, ok := state.Nodes[dep]
 		if !ok {
-			// Dependency doesn't exist in state — not satisfied.
 			return false
 		}
 		if depState.Status != domain.NodeStatusCompleted {
 			return false
 		}
 	}
-
 	return true
 }
 
