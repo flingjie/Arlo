@@ -14,9 +14,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/tui"
 
@@ -55,8 +55,6 @@ func main() {
 		attach(cmdArgs)
 	case "artifacts":
 		artifacts(cmdArgs)
-	case "tui":
-		tuiCmd(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -125,26 +123,15 @@ func run(args []string) {
 
 	fmt.Printf("Task created: %s\n", resp.TaskId)
 	fmt.Printf("Workflow:    %s\n", resp.WorkflowId)
+	fmt.Println("Launching TUI...")
 
-	// Start streaming events.
-	stream, err := client.SubscribeEvents(ctx, &arlov1.SubscribeEventsRequest{
-		WorkflowId:  resp.WorkflowId,
-		FromPosition: 0,
-	})
-	if err != nil {
-		log.Fatalf("subscribe: %v", err)
-	}
+	// Close the CLI's gRPC connection — TUI creates its own.
+	conn.Close()
 
-	fmt.Println("Streaming events (Ctrl+C to stop)...")
-	for {
-		event, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Fatalf("event stream: %v", err)
-		}
-		fmt.Printf("[%s] %s\n", event.Timestamp, event.Type)
+	time.Sleep(500 * time.Millisecond)
+
+	if err := tui.Run(socketPath, resp.WorkflowId); err != nil {
+		log.Fatalf("tui: %v", err)
 	}
 }
 
@@ -224,18 +211,3 @@ func artifacts(args []string) {
 		fmt.Printf("%-20s  %-12s  %s\n", n.NodeId, n.Status, n.SessionId)
 	}
 }
-
-
-// ── tui ───────────────────────────────────────────
-
-func tuiCmd(args []string) {
-	if len(args) < 1 {
-		log.Fatal("usage: arlo tui <workflow_id>")
-	}
-	if err := tui.Run(socketPath, args[0]); err != nil {
-		log.Fatalf("tui: %v", err)
-	}
-}
-
-// Ensure unused imports don't cause errors.
-var _ = net.Dial
