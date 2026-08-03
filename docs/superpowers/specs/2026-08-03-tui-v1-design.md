@@ -1,6 +1,6 @@
 # Arlo Bubble Tea TUI — v1 Design Spec
 
-> **Status:** Approved
+> **Status:** Approved (v1.1 — Architecture Update)
 > **Date:** 2026-08-03
 > **Related:** `docs/architecture.md` Layer 2 (gRPC API), Layer 1 (Workflow + DAG Engine)
 
@@ -13,18 +13,106 @@ The TUI is Arlo's primary user interface. It should feel like `k9s` or `lazygit`
 ## Design Principles
 
 1. **TUI is a View, not a Runtime** — arlod owns all state; the TUI is a read-only view + control surface over gRPC.
-2. **Event Stream is SSOT for real-time updates** — `SubscribeEvents` drives the Timeline.
-3. **Polling for eventual consistency** — `GetWorkflow` polled every 2s to reconcile state.
+2. **Event Stream is SSOT for real-time updates** — `SubscribeEvents` drives all state updates.
+3. **Snapshot API for reconciliation, not polling** — `GetWorkflowSnapshot` is called only on stream reconnect, version gap detection, or explicit user request. Under normal operation, the event stream alone keeps the UI current.
 4. **Completion doesn't exit** — users stay in the TUI to inspect results, artifacts, and logs after the workflow finishes.
 5. **Command bar, not key soup** — `:command` pattern like vim/lazygit for actions beyond navigation.
+6. **Separation of concerns** — CLI layer creates tasks (CreateTask), TUI layer observes and controls (Subscribe + Commands). The TUI never creates tasks.
+7. **Extensible internals** — Command Registry, Event Dispatcher, TimelineItem interface. Panels subscribe to internal events, not gRPC directly.
+
+## Internal Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Bubble Tea App                     │
+│                                                     │
+│  ┌─────────┐  ┌──────────┐  ┌───────────────────┐  │
+│  │ App     │  │ UI       │  │ Workflow          │  │
+│  │ Model   │  │ State    │  │ State             │  │
+│  └────┬────┘  └────┬─────┘  └────────┬──────────┘  │
+│       │            │                 │              │
+│  ┌────┴────────────┴─────────────────┴──────────┐  │
+│  │              Event Dispatcher                 │  │
+│  │  (internal pub/sub — decouples panels)       │  │
+│  └────┬────────────┬──────────────┬─────────────┘  │
+│       │            │              │                │
+│  ┌────┴────┐ ┌─────┴──────┐ ┌────┴──────────┐    │
+│  │Workflow │ │ Timeline   │ │ Inspector     │    │
+│  │ Panel   │ │ Panel      │ │ Panel         │    │
+│  └─────────┘ └────────────┘ └───────────────┘    │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐  │
+│  │           Command Registry                    │  │
+│  │  attach | retry | kill | logs | filter | ... │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐  │
+│  │           gRPC Client Layer                   │  │
+│  │  SubscribeEvents | GetWorkflowSnapshot       │  │
+│  │  ExecuteCommand | AttachWorkspace            │  │
+│  └──────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+### Component Responsibilities
+
+| Component | Role |
+|-----------|------|
+| **App Model** | Bubble Tea `Model`. Owns UIState, WorkflowState, gRPC connection. Delegates to panels for View. |
+| **UI State** | `struct { Focus Panel; SelectedNode string; InspectorOpen bool; InspectorTab string; Filter FilterState; CommandMode bool; CommandInput string }` — pure UI concerns. |
+| **Workflow State** | `struct { ID string; Status string; Version uint64; Nodes []NodeState; StartedAt time.Time }` — snapshot of workflow data, updated by event stream + reconciliation. |
+| **Event Dispatcher** | Internal pub/sub. Panels subscribe to typed events: `NodeChanged`, `EventAppended`, `WorkflowUpdated`, `Reconnected`. Decouples gRPC from rendering. |
+| **Command Registry** | `type Command interface { Name() string; Aliases() []string; Execute(args []string) tea.Cmd; Complete(input string) []string }`. Plugins register commands at init. |
+| **gRPC Client** | Connects to arlod. Runs SubscribeEvents loop, calls GetWorkflowSnapshot on reconnect/version gap. Emits internal events to Dispatcher. |
+
+## Data Flow
+
+```
+CLI (cmd/arlo)
+  │
+  │ 1. CreateTask(yaml) → workflowID
+  │
+  └──► TUI.Run(socket, workflowID)
+         │
+         │ 2. SubscribeEvents(workflowID) ──► real-time event stream
+         │ 3. GetWorkflowSnapshot(workflowID) ──► initial state + version
+         │
+         ▼
+    Event Dispatcher
+         │
+    ┌────┼────┬──────────┐
+    ▼    ▼    ▼          ▼
+  WF   TL   Insp    Overview
+```
+
+### Reconnect / Version Gap
+
+```
+Stream breaks
+  │
+  ├──► Reconnect SubscribeEvents
+  │
+  ├──► GetWorkflowSnapshot(workflowID)
+  │       returns { version: 41, nodes: [...] }
+  │
+  ├──► Compare: local version = 35, remote = 41
+  │       → gap detected, full state replacement
+  │
+  └──► Emit WorkflowUpdated to Dispatcher
+```
+
+No fixed-interval polling. The only time `GetWorkflowSnapshot` is called:
+- On initial TUI startup (to get baseline state)
+- On stream disconnect/reconnect (to detect gaps)
+- On explicit user refresh (`:refresh`)
 
 ## Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ Arlo wf-123  RUNNING  02:14  ██████░░ 66%  3 nodes  1 retry  1 gate │  ← Overview Bar
+│ Arlo wf-123  RUNNING  02:14  ██████░░ 66%  3 nodes  1 retry  1 gate │  ← Overview
 ├──────────────────────────┬───────────────────────────────────────┤
-│ WORKFLOW                 │ TIMELINE / INSPECTOR (toggle)         │  ← Panels (50/50 split)
+│ WORKFLOW                 │ TIMELINE / INSPECTOR (toggle)         │  ← 50/50 split
 │                          │                                       │
 │ ▼ analyze                │  15:27  analyze started               │
 │   ● RUNNING              │  15:28  tool: grep                    │
@@ -47,21 +135,9 @@ The TUI is Arlo's primary user interface. It should feel like `k9s` or `lazygit`
 
 | Panel | Content | Data Source |
 |-------|---------|-------------|
-| **Overview Bar** | Workflow ID + status badge + elapsed time + progress bar + node/retry/gate/worker counts | `GetWorkflow` (2s poll) |
-| **Workflow (left)** | Tree of nodes with status icons, session IDs, retry counts, dependency arrows, gate markers | `GetWorkflow` (2s poll) |
-| **Timeline/Inspector (right)** | Real-time event stream with filter support; toggles to Node Inspector on `Enter` | `SubscribeEvents` (real-time stream) + `GetWorkflow` |
-
-### Command Bar
-
-`:q` / `:quit` — exit
-`:a <node>` / `:attach <node>` — attach PTY session
-`:r <node>` / `:retry <node>` — retry failed node (future)
-`:k <node>` / `:kill <node>` — kill running node (future)
-`:f` / `:filter` — toggle event filter
-`:logs <node>` — view node logs (future)
-`:help` — show help
-
-Also supports `Ctrl+C` and `Esc` for quick quit.
+| **Overview Bar** | Workflow ID + status badge + elapsed time + progress bar + node/retry/gate/worker counts | Event Dispatcher (`WorkflowUpdated`) |
+| **Workflow (left)** | Tree of nodes with status icons, session IDs, retry counts, dependency arrows, gate markers | Event Dispatcher (`NodeChanged`) |
+| **Timeline/Inspector (right)** | TimelineItem stream (events + execution items) with filter; toggles to Tabbed Node Inspector on `Enter` | Event Dispatcher (`EventAppended`) |
 
 ## Interaction Model
 
@@ -69,58 +145,120 @@ Also supports `Ctrl+C` and `Esc` for quick quit.
 |-----|--------|
 | `q` / `Esc` / `Ctrl+C` | Quit TUI (stays open after workflow completes) |
 | `tab` | Switch focus between Workflow panel and Timeline/Inspector |
-| `↑` `↓` | Navigate node list (left) or scroll events (right) |
+| `↑` `↓` | Navigate node tree (left) or scroll timeline (right) |
 | `PgUp` `PgDn` | Page scroll in Timeline |
 | `Enter` | On focused node → right panel switches to **Node Inspector** |
-| `Esc` | From Inspector → back to Timeline |
+| `Esc` | From Inspector → back to Timeline; or close overlay |
 | `f` | Open event type filter overlay |
 | `:` | Enter command mode |
 | `←` `→` | Collapse/expand workflow tree nodes |
+| `1`-`5` | Switch Inspector tabs (Summary, Logs, Prompt, Artifacts, Metrics) |
 
-## Node Inspector (right panel toggle)
+## Timeline Items (not raw Events)
 
-When `Enter` is pressed on a node, the right panel shows:
+```go
+type TimelineItem interface {
+    Time()    time.Time
+    Level()   Level   // INFO, WARN, ERROR, DEBUG
+    Render()  string  // single-line representation
+}
 
-```
-┌── Node Inspector ──────────────────┐
-│                                    │
-│  Node        implement             │
-│  Status      RUNNING               │
-│  Session     sess-abc123           │
-│  Started     15:27:42              │
-│  Duration    3m12s                 │
-│  Retry       2                     │
-│  Depends     analyze               │
-│  Worker      runtime-3             │
-│  Skill       coder                 │
-│  Gate        —                     │
-│                                    │
-│  [Attach Session]  (press a)       │
-│  [Retry Node]      (press r)       │
-│  [View Logs]       (press l)       │
-│                                    │
-└────────────────────────────────────┘
+type Level int
+const (
+    INFO  Level = iota
+    WARN
+    ERROR
+    DEBUG
+)
 ```
 
-## Event Timeline Filter
+Built-in item types:
+
+| Item | Source | Level |
+|------|--------|-------|
+| `NodeStartedItem` | `NODE_STARTED` event | INFO |
+| `NodeCompletedItem` | `NODE_COMPLETED` event | INFO |
+| `NodeFailedItem` | `NODE_FAILED` event | ERROR |
+| `NodeWaitingItem` | `NODE_WAITING` event | WARN |
+| `RetryItem` | Replay analysis | WARN |
+| `ToolCallItem` | Runtime instrumentation (future) | DEBUG |
+| `ErrorItem` | Any error event | ERROR |
+
+The Timeline panel renders `TimelineItem` interface, not proto Events directly. New item types are added without changing the panel.
+
+## Node Inspector (tabbed)
+
+When `Enter` is pressed on a node, the right panel shows a tabbed inspector:
 
 ```
-┌── Filter ──────────────────────────┐
-│                                    │
-│  [x] workflow events               │
-│  [x] node events                   │
-│  [ ] tool calls                    │
-│  [x] errors                        │
-│  [ ] token stream                  │
-│                                    │
-│  Press Enter to apply              │
-│                                    │
-└────────────────────────────────────┘
+┌── Node Inspector ─── [Summary] [Logs] [Prompt] [Artifacts] [Metrics] ──┐
+│                                                                         │
+│  Node        implement                                                  │
+│  Status      RUNNING                                                    │
+│  Session     sess-abc123                                                │
+│  Started     15:27:42                                                   │
+│  Duration    3m12s                                                      │
+│  Retry       2                                                          │
+│  Depends     analyze                                                    │
+│  Worker      runtime-3                                                  │
+│  Skill       coder                                                      │
+│  Gate        —                                                          │
+│                                                                         │
+│  :attach workspace    :retry    :logs                                    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+Tabs:
+- **Summary** (1) — node metadata, status, actions
+- **Logs** (2) — filtered timeline items for this node
+- **Prompt** (3) — skill prompt + input (future)
+- **Artifacts** (4) — output artifacts list (future)
+- **Metrics** (5) — token usage, duration breakdown (future)
+
+## Command Registry
+
+```go
+type Command interface {
+    Name()        string              // "attach"
+    Aliases()     []string            // ["a"]
+    Description() string              // "Attach to a node's workspace session"
+    Usage()       string              // ":attach <node-id>"
+    Execute(args  []string, ctx *AppContext) tea.Cmd
+    Complete(input string) []string   // tab completion suggestions
+}
+```
+
+Registry is a map, not a switch. Commands register at init:
+
+```go
+func init() {
+    registry.Register(&AttachCommand{})
+    registry.Register(&RetryCommand{})
+    registry.Register(&KillCommand{})
+    registry.Register(&LogsCommand{})
+    registry.Register(&FilterCommand{})
+    registry.Register(&QuitCommand{})
+    registry.Register(&HelpCommand{})
+}
+```
+
+| Command | Alias | Status |
+|---------|-------|--------|
+| `:attach <node>` | `:a` | v1.0 |
+| `:quit` | `:q` | v1.0 |
+| `:help` | `:h` | v1.0 |
+| `:filter` | `:f` | v1.0 |
+| `:refresh` | `:rf` | v1.0 |
+| `:retry <node>` | `:r` | future (needs gRPC) |
+| `:kill <node>` | `:k` | future |
+| `:logs <node>` | `:l` | future |
+| `:pause` | `:p` | future |
+| `:continue` | `:c` | future |
 
 ## Data Model Changes
 
-### Proto: `NodeState` — add `depends_on`
+### Proto: `NodeState` — add `depends_on`, `children`, `gate`
 
 ```proto
 message NodeState {
@@ -129,20 +267,49 @@ message NodeState {
   string session_id = 3;
   string runtime_id = 4;
   int32 retry_count = 5;
-  repeated string depends_on = 6;  // NEW: node IDs this node depends on
-  string gate = 7;                  // NEW: human gate condition (e.g. "human_approval")
+  repeated string depends_on = 6;  // NEW: upstream dependencies
+  repeated string children = 7;     // NEW: downstream dependents (computed by projection)
+  string gate = 8;                  // NEW: human gate condition
 }
 ```
 
-### Domain: `NodeState` — add `DependsOn` and `Gate`
+### Proto: `GetWorkflowSnapshot` — add `version`
 
-Add `DependsOn []string` and `Gate string` to `domain.NodeState` (internal/domain/node.go).
+```proto
+message GetWorkflowSnapshotRequest {
+  string workflow_id = 1;
+}
 
-### Projection: Populate dependencies
+message GetWorkflowSnapshotResponse {
+  string workflow_id = 1;
+  string status = 2;
+  uint64 version = 3;               // NEW: monotonic version for gap detection
+  google.protobuf.Timestamp started_at = 4;  // NEW
+  repeated NodeState nodes = 5;
+}
+```
 
-During `NODE_CREATED` event handling in the WorkflowProjection, read the node's `DependsOn` from the graph definition (or embed it in the event payload) and store it in the projection.
+(Keep existing `GetWorkflow` for backward compat; add `GetWorkflowSnapshot` as the TUI-facing RPC.)
 
-### Event payload: `NodeCreated` — include `DependsOn` and `Gate`
+### Domain: `NodeState` — add `DependsOn`, `Children`, `Gate`
+
+```go
+type NodeState struct {
+    NodeID      string
+    Status      NodeStatus
+    SessionID   string
+    RuntimeID   string
+    StartedAt   *time.Time
+    CompletedAt *time.Time
+    RetryCount  int
+    Output      map[string]string
+    DependsOn   []string  // NEW
+    Children    []string  // NEW (computed by projection)
+    Gate        string    // NEW
+}
+```
+
+### Event payload: `NodeCreated` — include `DependsOn`, `Gate`
 
 ```go
 type NodeCreated struct {
@@ -150,62 +317,92 @@ type NodeCreated struct {
     WorkflowID string   `json:"workflow_id"`
     SkillName  string   `json:"skill_name"`
     Runtime    string   `json:"runtime"`
-    DependsOn  []string `json:"depends_on,omitempty"`  // NEW
-    Gate       string   `json:"gate,omitempty"`         // NEW
+    DependsOn  []string `json:"depends_on,omitempty"`
+    Gate       string   `json:"gate,omitempty"`
 }
 ```
+
+### Projection: Build Workflow Tree
+
+WorkflowProjection computes `Children` from `DependsOn` during rebuild:
+
+```
+For each node n with DependsOn [A, B]:
+    A.Children = append(A.Children, n.NodeID)
+    B.Children = append(B.Children, n.NodeID)
+```
+
+This way the TUI receives a pre-built tree — no DAG construction at render time.
 
 ## Implementation Scope
 
 ### Phase 1: Proto + Domain Changes (backend prep)
-1. Add `depends_on` + `gate` to `NodeState` proto
-2. Add `DependsOn` + `Gate` to `domain.NodeState`
-3. Add `DependsOn` + `Gate` to `domain.NodeCreated` event payload
-4. Populate in `CreateTask` service handler
-5. Populate in WorkflowProjection
-6. Pass through in `GetWorkflow` service handler
-7. Regenerate protobuf
+1. Add `depends_on`, `children`, `gate` to `NodeState` proto
+2. Add `GetWorkflowSnapshot` RPC with `version` + `started_at`
+3. Add `DependsOn`, `Children`, `Gate` to `domain.NodeState`
+4. Add `DependsOn`, `Gate` to `domain.NodeCreated` event payload
+5. Populate in `CreateTask` service handler
+6. Build Children in WorkflowProjection
+7. Implement `GetWorkflowSnapshot` service handler
+8. Regenerate protobuf
 
-### Phase 2: TUI Rewrite
-1. Rewrite `internal/tui/tui.go` — new Model with three-panel layout
-2. Split into files: `tui.go` (model+update), `workflow.go` (left panel), `timeline.go` (right panel), `inspector.go`, `command.go`, `styles.go`
-3. gRPC integration: `CreateTask` → `SubscribeEvents` + `GetWorkflow` poll loop
-4. Merge `arlo run` and `arlo tui` into single TUI entry flow
+### Phase 2: TUI Architecture
+1. `internal/tui/` package restructured:
+   - `app.go` — App Model (Bubble Tea Model + Init + Update + View)
+   - `state.go` — UIState + WorkflowState structs
+   - `dispatcher.go` — Event Dispatcher (internal pub/sub)
+   - `client.go` — gRPC client: SubscribeEvents loop + snapshot on reconnect
+   - `workflow_panel.go` — Workflow tree panel
+   - `timeline_panel.go` — Timeline panel (renders TimelineItem interface)
+   - `inspector_panel.go` — Tabbed Node Inspector
+   - `command.go` — Command Registry + individual commands
+   - `styles.go` — Lipgloss styles + theme
+   - `timeline_items.go` — Built-in TimelineItem types
+2. `cmd/arlo/main.go` — CLI does CreateTask, then calls `tui.Run(socket, workflowID)`
 
 ### Phase 3: Interactive Features
-1. Command bar with `:attach`, `:quit`, `:help`
-2. Node Inspector (Enter/Esc toggle)
-3. Event filter overlay
+1. Command bar with `:attach`, `:quit`, `:help`, `:filter`, `:refresh`
+2. Node Inspector with tab navigation (Summary tab full; other tabs stubbed)
+3. Event type filter overlay
 4. Workflow tree collapse/expand
 5. Progress bar in overview
+6. Workspace attach (via `:attach <node>` — delegates to gRPC AttachWorkspace)
 
 ### Out of Scope (v1+)
-- Execution-level events (TOOL_CALL, MODEL_CALL, TOKEN_STREAM) — needs runtime instrumentation
-- `:retry`, `:kill`, `:logs`, `:pause`, `:continue` — needs command RPCs
+- `:retry`, `:kill`, `:logs`, `:pause`, `:continue` — need command RPCs
+- Inspector tabs beyond Summary (Logs, Prompt, Artifacts, Metrics)
+- Execution-level TimelineItems (TOOL_CALL, MODEL_CALL, TOKEN_STREAM)
 - Soft/human dependency types in proto
 - PTY inline rendering in TUI
+- Event Bus persistence / session restore
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
-| `api/proto/arlo/v1/service.proto` | Add `depends_on`, `gate` to `NodeState` |
-| `internal/domain/node.go` | Add `DependsOn`, `Gate` to `NodeState` and `NodeCreated` |
-| `internal/domain/workflow.go` | Verify `Node` struct has required fields |
-| `internal/state/workflow_projection.go` | Populate `DependsOn` + `Gate` during projection |
-| `internal/service/arlo_service.go` | Pass `DependsOn` + `Gate` in `CreateTask` seed + `GetWorkflow` response |
-| `cmd/arlo/main.go` | Merge `run` + `tui` commands |
-| `internal/tui/tui.go` | Rewrite — new Model, three-panel layout, gRPC integration |
-| `internal/tui/workflow.go` | NEW — Workflow tree panel |
-| `internal/tui/timeline.go` | NEW — Event Timeline panel |
-| `internal/tui/inspector.go` | NEW — Node Inspector panel |
-| `internal/tui/command.go` | NEW — Command bar + mode |
-| `internal/tui/styles.go` | NEW — Lipgloss styles |
+| `api/proto/arlo/v1/service.proto` | Add fields to NodeState; add GetWorkflowSnapshot RPC |
+| `internal/domain/node.go` | Add DependsOn, Children, Gate to NodeState and NodeCreated |
+| `internal/state/workflow_projection.go` | Build Children from DependsOn during projection |
+| `internal/service/arlo_service.go` | Populate new fields; implement GetWorkflowSnapshot |
+| `cmd/arlo/main.go` | Refactor: CLI creates task, TUI observes |
+| `internal/tui/app.go` | NEW — App Model, Init/Update/View |
+| `internal/tui/state.go` | NEW — UIState, WorkflowState |
+| `internal/tui/dispatcher.go` | NEW — Event Dispatcher |
+| `internal/tui/client.go` | NEW — gRPC client + event stream loop |
+| `internal/tui/workflow_panel.go` | NEW — Workflow tree panel |
+| `internal/tui/timeline_panel.go` | NEW — Timeline panel |
+| `internal/tui/inspector_panel.go` | NEW — Tabbed Node Inspector |
+| `internal/tui/command.go` | NEW — Command Registry |
+| `internal/tui/styles.go` | NEW — Styles + theme |
+| `internal/tui/timeline_items.go` | NEW — TimelineItem types |
+| `internal/tui/tui.go` | DELETE (replaced by app.go + panels) |
 
 ## Testing
 
-- **Unit tests** for each panel's render output (snapshot or golden file)
-- **Integration test** with a mock gRPC server streaming events
+- **Unit tests** for each panel's render output
+- **Unit tests** for Command Registry (registration, execution, completion)
+- **Unit tests** for Event Dispatcher (subscribe, emit, unsubscribe)
+- **Integration test** with mock gRPC server simulating event stream + reconnect
 - **Manual test** against running arlod with `graphs/bugfix.yaml`
 
 ## References
