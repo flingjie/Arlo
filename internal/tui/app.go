@@ -200,7 +200,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.ui.Width = msg.Width
 		m.ui.Height = msg.Height
-		cmds = append(cmds, func() tea.Msg { return msg })
 
 	case connectedMsg:
 		if msg.err != nil {
