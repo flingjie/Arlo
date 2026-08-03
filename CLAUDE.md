@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> **Architecture:** See [`docs/architecture.md`](docs/architecture.md) for the complete 12-layer North Star design and v0.1 MVP scope.
+> **Current Status:** Pre-implementation. Architecture approved, v0.1 implementation starting with Step 1 (Event Store + SQLite).
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Identity
@@ -72,26 +75,32 @@ go test -race ./internal/runtime/...
                                └──────────────────────────────┘
 ```
 
-### Package Responsibilities
+### v0.1 Package Structure
 
-| Package | Responsibility | Has Tests? |
-|---------|---------------|------------|
-| `cmd/arlod/` | Daemon binary entrypoint. Wires dependencies, starts gRPC server. | No (thin main) |
-| `cmd/arlo/` | CLI binary entrypoint. Starts Bubble Tea app, connects to daemon. | No (thin main) |
-| `api/proto/` | Protobuf service and message definitions. Single source of truth for the gRPC contract. | N/A |
-| `internal/eventsourcing/` | **Core domain.** Command, Event, Aggregate, Projection base types. The event sourcing engine. | **Yes** |
-| `internal/runtime/` | Agent lifecycle: scheduling, execution, state machines. Depends on `eventsourcing`. | **Yes** |
-| `internal/store/` | Event store implementation. Append-only log, snapshots, replay. | **Yes** |
-| `internal/service/` | gRPC service handlers. Thin layer that delegates to `runtime` and `eventsourcing`. | **Yes** |
-| `pkg/` | Packages safe to import externally. Avoid unless the abstraction is truly stable. | **Yes** |
+| Package | Responsibility | Status |
+|---------|---------------|--------|
+| `cmd/arlod/` | Daemon entrypoint. Wires all dependencies, starts gRPC server. | Not started |
+| `cmd/arlo/` | CLI entrypoint. `run`, `status`, `attach`, `artifacts` commands. | Not started |
+| `api/proto/` | Protobuf service definitions. gRPC contract. | Not started |
+| `internal/store/` | Event Store + SQLite implementation. Append-only event log. | **Step 1** |
+| `internal/domain/` | Event types, Task, Workflow, Node, RuntimeInstance, Artifact structs. | **Step 2** |
+| `internal/state/` | State Store + Projections. Replay events → current state. | **Step 3** |
+| `internal/workflow/` | Workflow Engine. YAML parser, DAG compiler, Evaluate → Decisions. | **Step 4** |
+| `internal/reconciler/` | Reconciliation loop. Read state → compute → act. | **Step 5** |
+| `internal/runtime/` | RuntimeManager + ClaudeCodeAdapter. Agent process lifecycle. | **Step 6** |
+| `internal/workspace/` | WorkspaceManager + TmuxProvider. Tmux session/window management. | **Step 6** |
+| `internal/service/` | gRPC service handlers. Thin layer delegating to lower packages. | **Step 7** |
 
-### Dependency Direction
+### Dependency Direction (v0.1)
 
 ```
-cmd → internal/service → internal/runtime → internal/eventsourcing → internal/store
+cmd → internal/service → internal/reconciler → internal/workflow → internal/state → internal/store
+                                                      │
+                          internal/runtime ────────────┘
+                          internal/workspace ──────────┘
 ```
 
-Each layer depends only on the layer directly beneath it. Never invert this. If `runtime` needs something from `service`, extract it into a shared interface in `eventsourcing` or a new `internal/` package.
+Dependencies flow downward. Packages at the same level (runtime, workspace) do not depend on each other — they're orchestrated by the Reconciler.
 
 ## Event Sourcing Conventions
 
