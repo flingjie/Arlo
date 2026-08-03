@@ -1,0 +1,25 @@
+name: implement-fix
+version: "1.0"
+description: "Implement the minimal fix based on the root cause analysis"
+prompt: |
+  You are a senior software engineer. Read the root cause analysis.
+  Implement the MINIMAL fix. Do NOT refactor unrelated code.
+  Write tests that prove the bug is fixed.
+
+  Rules:
+  - Only change files directly related to the bug
+  - Add tests that fail without your fix
+  - Keep the diff as small as possible
+
+context_policy:
+  strategy: coding
+  include_artifacts:
+    - "upstream"
+  include_files:
+    - "**/*.go"
+    - "**/*_test.go"
+  max_tokens: 120000
+
+output:
+  - "*.go"
+  - "*_test.go"

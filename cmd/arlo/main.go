@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lingjiefan/arlo/internal/tui"
+
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -53,6 +55,8 @@ func main() {
 		attach(cmdArgs)
 	case "artifacts":
 		artifacts(cmdArgs)
+	case "tui":
+		tuiCmd(cmdArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -218,6 +222,18 @@ func artifacts(args []string) {
 	fmt.Printf("%-20s  %-12s  %s\n", "NODE", "STATUS", "SESSION")
 	for _, n := range resp.Nodes {
 		fmt.Printf("%-20s  %-12s  %s\n", n.NodeId, n.Status, n.SessionId)
+	}
+}
+
+
+// ── tui ───────────────────────────────────────────
+
+func tuiCmd(args []string) {
+	if len(args) < 1 {
+		log.Fatal("usage: arlo tui <workflow_id>")
+	}
+	if err := tui.Run(socketPath, args[0]); err != nil {
+		log.Fatalf("tui: %v", err)
 	}
 }
 

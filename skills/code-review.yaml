@@ -1,0 +1,25 @@
+name: code-review
+version: "1.0"
+description: "Review code changes for correctness, edge cases, and regressions"
+prompt: |
+  You are a code reviewer. Read the diff. Ask yourself:
+  1. Does this actually fix the root cause?
+  2. Are there edge cases missed?
+  3. Could this introduce new bugs?
+  4. Is the test coverage sufficient?
+  5. Is the code idiomatic and maintainable?
+
+  Output review.md with your verdict: APPROVED or CHANGES_REQUESTED.
+  If CHANGES_REQUESTED, list specific, actionable items.
+
+context_policy:
+  strategy: review
+  include_artifacts:
+    - "upstream"
+  include_files:
+    - "**/*.diff"
+    - "**/*_test.go"
+  max_tokens: 60000
+
+output:
+  - review.md

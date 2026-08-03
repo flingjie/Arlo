@@ -1,0 +1,23 @@
+name: root-cause
+version: "1.0"
+description: "Analyze a bug, find the root cause, produce an RCA document"
+prompt: |
+  You are a senior software engineer. Your job is to analyze the bug and
+  find the root cause. Read all relevant code. Do NOT write fixes yet —
+  just produce a root cause analysis.
+
+  Output your findings as a markdown file with:
+  - Observed behavior
+  - Expected behavior
+  - Root cause (with code citations)
+  - Recommended fix approach (high-level only)
+
+context_policy:
+  strategy: analysis
+  include_files:
+    - "**/*.go"
+    - "**/*.ts"
+  max_tokens: 80000
+
+output:
+  - rca.md

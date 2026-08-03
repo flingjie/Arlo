@@ -90,6 +90,7 @@ type ContextArtifact struct {
 	Included      bool   `json:"included"`
 	OmittedReason string `json:"omitted_reason,omitempty"`
 	Priority      int    `json:"priority"`
+	TokenCount    int    `json:"token_count,omitempty"`
 }
 
 // ContextFile is a file included in the context.
@@ -104,5 +105,6 @@ type AssembledPrompt struct {
 	System  string   `json:"system"`
 	Context string   `json:"context"`
 	Tokens  int      `json:"tokens"`
-	Omitted []string `json:"omitted,omitempty"` // what got dropped due to budget
+	Budget  int      `json:"budget"`  // token budget that was targeted
+	Omitted []string `json:"omitted,omitempty"`
 }
