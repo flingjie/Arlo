@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
@@ -17,6 +18,10 @@ type Client struct {
 	socket string
 	conn   *grpc.ClientConn
 	api    arlov1.ArloServiceClient
+
+	// Event stream — one persistent gRPC stream per client lifetime.
+	streamOnce sync.Once
+	eventCh    chan tea.Msg
 }
 
 // NewClient creates a new gRPC client for the given Unix socket.
@@ -77,30 +82,61 @@ type snapshotMsg struct {
 	err        error
 }
 
-// SubscribeEvents starts an event stream and returns events as messages.
-func (c *Client) SubscribeEvents(workflowID string) tea.Cmd {
+// StartEventStream opens a single persistent gRPC event stream and starts
+// a background goroutine that feeds events into a channel. Event replay
+// from position 0 is handled server-side, so the TUI sees all historical
+// events followed by live ones. Call once; subsequent calls are no-ops.
+func (c *Client) StartEventStream(workflowID string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		stream, err := c.api.SubscribeEvents(ctx, &arlov1.SubscribeEventsRequest{
-			WorkflowId:  workflowID,
-			FromPosition: 0,
+		c.streamOnce.Do(func() {
+			c.eventCh = make(chan tea.Msg, 256)
+			go c.runEventStream(workflowID)
 		})
-		if err != nil {
-			return streamErrMsg{err: fmt.Errorf("subscribe: %w", err)}
-		}
-
-		for {
-			event, err := stream.Recv()
-			if err == io.EOF {
-				return streamEndMsg{}
-			}
-			if err != nil {
-				return streamErrMsg{err: fmt.Errorf("stream recv: %w", err)}
-			}
-			return eventMsg{event: event}
-		}
+		return streamReadyMsg{}
 	}
 }
+
+func (c *Client) runEventStream(workflowID string) {
+	defer close(c.eventCh)
+
+	ctx := context.Background()
+	stream, err := c.api.SubscribeEvents(ctx, &arlov1.SubscribeEventsRequest{
+		WorkflowId:   workflowID,
+		FromPosition: 0,
+	})
+	if err != nil {
+		c.eventCh <- streamErrMsg{err: fmt.Errorf("subscribe: %w", err)}
+		return
+	}
+
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			c.eventCh <- streamEndMsg{}
+			return
+		}
+		if err != nil {
+			c.eventCh <- streamErrMsg{err: fmt.Errorf("stream recv: %w", err)}
+			return
+		}
+		c.eventCh <- eventMsg{event: event}
+	}
+}
+
+// RecvEvent returns a command that blocks until the next event arrives
+// from the persistent event stream. This avoids opening a new gRPC stream
+// per event.
+func (c *Client) RecvEvent() tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-c.eventCh
+		if !ok {
+			return streamEndMsg{}
+		}
+		return msg
+	}
+}
+
+type streamReadyMsg struct{}
 
 // ExecuteCommand sends a human-in-the-loop command (approve/reject/cancel_task).
 func (c *Client) ExecuteCommand(command, target, input string) tea.Cmd {

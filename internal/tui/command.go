@@ -135,8 +135,8 @@ func (c *RefreshCommand) Usage() string       { return ":refresh" }
 
 func (c *RefreshCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
 	return tea.Batch(
-		ctx.Client.SubscribeEvents(ctx.WorkflowID),
 		ctx.Client.GetSnapshot(ctx.WorkflowID),
+		ctx.Client.RecvEvent(),
 	)
 }
 

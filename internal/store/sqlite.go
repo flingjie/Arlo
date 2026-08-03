@@ -258,6 +258,8 @@ func (s *SQLiteStore) ReadAll(ctx context.Context, fromPosition int64, limit int
 // Subscribe returns a channel that receives new events as they are appended.
 // The channel is closed when ctx is cancelled or the store is closed.
 // Events are delivered starting from the event after fromPosition.
+// Historical events from fromPosition onward are replayed first, then live
+// events are delivered as they are appended.
 func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,6 +278,26 @@ func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan
 		delete(s.subscribers, id)
 		s.mu.Unlock()
 		sub.close()
+	}()
+
+	// Replay historical events before the caller starts consuming live events.
+	// This ensures clients see events that were appended before they subscribed.
+	go func() {
+		pos := fromPosition
+		for {
+			events, nextPos, err := s.ReadAll(ctx, pos, 1000)
+			if err != nil || len(events) == 0 {
+				return
+			}
+			for _, e := range events {
+				select {
+				case sub.ch <- e:
+				case <-ctx.Done():
+					return
+				}
+			}
+			pos = nextPos
+		}
 	}()
 
 	return sub.ch, nil

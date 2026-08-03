@@ -209,7 +209,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ready = true
 		cmds = append(cmds,
-			m.client.SubscribeEvents(m.workflow),
+			m.client.StartEventStream(m.workflow),
 			m.client.GetSnapshot(m.workflow),
 		)
 
@@ -227,14 +227,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Nodes:   msg.nodes,
 			})
 		}
-		cmds = append(cmds, m.client.SubscribeEvents(m.workflow))
+
+	case streamReadyMsg:
+		// Persistent event stream is live — start consuming events.
+		cmds = append(cmds, m.client.RecvEvent())
 
 	case eventMsg:
 		if msg.event != nil {
 			item := EventToItem(msg.event)
 			m.dispatcher.Emit(EventAppendedEvent{Item: item})
 		}
-		cmds = append(cmds, m.client.SubscribeEvents(m.workflow))
+		cmds = append(cmds, m.client.RecvEvent())
 
 	case streamErrMsg:
 		cmds = append(cmds, m.client.GetSnapshot(m.workflow))
