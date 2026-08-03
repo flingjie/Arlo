@@ -207,6 +207,11 @@ func (p *workflowProjection) Apply(event store.Event) error {
 	case store.EventTaskCreated:
 		return p.applyTaskCreated(event)
 
+		case store.EventTaskCompleted:
+			return p.applyTaskCompleted(event)
+		case store.EventTaskFailed:
+			return p.applyTaskFailed(event)
+
 	// ── Workflow events ───────────────────────────
 	case store.EventWorkflowCreated:
 		return p.applyWorkflowCreated(event)
@@ -339,4 +344,40 @@ func (p *workflowProjection) applyNodeWaiting(event store.Event) error {
 		}
 	}
 	return fmt.Errorf("node %s not found for NodeWaiting event", payload.NodeID)
+}
+
+func (p *workflowProjection) applyTaskCompleted(event store.Event) error {
+	var payload domain.TaskCompleted
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal TaskCompleted: %w", err)
+	}
+
+	// TaskCompleted payload has TaskID, but we need the workflowID.
+	// In v0.1, the event streamID is "workflow-<id>", so we extract the workflow ID
+	// from the stream, or match by task ID by searching workflows.
+	// Simplification: mark all active workflows with matching task as completed.
+	// The event.StreamID is "workflow-<workflowID>".
+	wfID := event.StreamID
+	if len(wfID) > 9 && wfID[:9] == "workflow-" {
+		wfID = wfID[9:]
+	}
+	if wf, ok := p.store.workflows[wfID]; ok {
+		wf.Status = domain.WorkflowStatusCompleted
+	}
+	return nil
+}
+
+func (p *workflowProjection) applyTaskFailed(event store.Event) error {
+	var payload domain.TaskFailed
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal TaskFailed: %w", err)
+	}
+	wfID := event.StreamID
+	if len(wfID) > 9 && wfID[:9] == "workflow-" {
+		wfID = wfID[9:]
+	}
+	if wf, ok := p.store.workflows[wfID]; ok {
+		wf.Status = domain.WorkflowStatusFailed
+	}
+	return nil
 }
