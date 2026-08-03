@@ -167,10 +167,40 @@ func (ss *InMemoryStateStore) Rebuild(ctx context.Context) error {
 		ss.lastRebuiltPos = currentPos
 	}
 
+
+		// Compute workflow trees (Children from DependsOn).
+		ss.mu.Lock()
+		ss.rebuildTree()
+		ss.mu.Unlock()
+
 	return nil
 }
 
 // ── Internal: Projection helpers ───────────────────
+
+// rebuildTree computes Children from DependsOn for all nodes in all workflows.
+// Must be called with the write lock held.
+func (ss *InMemoryStateStore) rebuildTree() {
+	for _, wf := range ss.workflows {
+		for nodeID, ns := range wf.Nodes {
+			for _, dep := range ns.DependsOn {
+				if depNS, ok := wf.Nodes[dep]; ok {
+					found := false
+					for _, child := range depNS.Children {
+						if child == nodeID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						depNS.Children = append(depNS.Children, nodeID)
+						wf.Nodes[dep] = depNS
+					}
+				}
+			}
+		}
+	}
+}
 
 // upsertWorkflow ensures a workflow exists, creating it if needed.
 // Must be called with the write lock held.
@@ -290,7 +320,22 @@ func (p *workflowProjection) applyNodeCreated(event store.Event) error {
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return fmt.Errorf("unmarshal NodeCreated: %w", err)
 	}
-	p.store.upsertNode(payload.WorkflowID, payload.NodeID)
+
+	dependsOn := payload.DependsOn
+	if dependsOn == nil {
+		dependsOn = []string{}
+	}
+
+	ns := domain.NodeState{
+		NodeID:    payload.NodeID,
+		Status:    domain.NodeStatusPending,
+		DependsOn: dependsOn,
+		Gate:      payload.Gate,
+	}
+
+	wf := p.store.upsertWorkflow(payload.WorkflowID)
+	wf.Nodes[payload.NodeID] = ns
+	p.store.nodeIndex[payload.NodeID] = payload.WorkflowID
 	return nil
 }
 

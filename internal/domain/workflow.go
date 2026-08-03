@@ -111,6 +111,7 @@ type WorkflowInstance struct {
 type WorkflowState struct {
 	ID        string              `json:"id"`
 	Status    WorkflowStatus      `json:"status"`
+	Version   uint64              `json:"version"`
 	Nodes     map[string]NodeState `json:"nodes"`
 	CreatedAt time.Time           `json:"created_at"`
 	UpdatedAt time.Time           `json:"updated_at"`

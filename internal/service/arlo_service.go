@@ -29,12 +29,12 @@ import (
 type ArloService struct {
 	arlov1.UnimplementedArloServiceServer
 
-	eventStore    store.EventStore
-	stateStore    state.StateStore
-	engine        *workflow.Engine
-	reconciler    *reconciler.Reconciler
-	runtimeMgr    *runtime.Manager
-	workspaceMgr  *workspace.Manager
+	eventStore   store.EventStore
+	stateStore   state.StateStore
+	engine       *workflow.Engine
+	reconciler   *reconciler.Reconciler
+	runtimeMgr   *runtime.Manager
+	workspaceMgr *workspace.Manager
 }
 
 // New creates a new ArloService.
@@ -76,16 +76,16 @@ func (s *ArloService) CreateTask(ctx context.Context, req *arlov1.CreateTaskRequ
 	// Seed initial events.
 	if _, err := s.eventStore.Append(ctx, "workflow-"+wfID, []store.Event{
 		{
-			ID:      fmt.Sprintf("evt-task-%s", taskID),
-			Type:    store.EventTaskCreated,
+			ID:   fmt.Sprintf("evt-task-%s", taskID),
+			Type: store.EventTaskCreated,
 			Payload: marshalJSON(domain.TaskCreated{
 				TaskID: taskID, Title: req.Title, Description: req.Description,
 				CreatedBy: "cli", WorkflowID: wfID,
 			}),
 		},
 		{
-			ID:      fmt.Sprintf("evt-wf-%s", wfID),
-			Type:    store.EventWorkflowCreated,
+			ID:   fmt.Sprintf("evt-wf-%s", wfID),
+			Type: store.EventWorkflowCreated,
 			Payload: marshalJSON(domain.WorkflowCreated{
 				WorkflowID: wfID, TaskID: taskID, GraphName: graph.Name, Version: graph.Version,
 			}),
@@ -176,6 +176,9 @@ func (s *ArloService) GetWorkflow(ctx context.Context, req *arlov1.GetWorkflowRe
 			SessionId:  ns.SessionID,
 			RuntimeId:  ns.RuntimeID,
 			RetryCount: int32(ns.RetryCount),
+			DependsOn:  ns.DependsOn,
+			Children:   ns.Children,
+			Gate:       ns.Gate,
 		})
 	}
 
@@ -183,6 +186,39 @@ func (s *ArloService) GetWorkflow(ctx context.Context, req *arlov1.GetWorkflowRe
 		WorkflowId: wf.ID,
 		Status:     string(wf.Status),
 		Nodes:      nodes,
+	}, nil
+}
+
+// GetWorkflowSnapshot returns the current workflow state plus a monotonic version
+// for gap detection after stream reconnect.
+func (s *ArloService) GetWorkflowSnapshot(ctx context.Context, req *arlov1.GetWorkflowSnapshotRequest) (*arlov1.GetWorkflowSnapshotResponse, error) {
+	wf, err := s.stateStore.GetWorkflow(ctx, req.WorkflowId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "workflow not found: %v", err)
+	}
+
+	var nodes []*arlov1.NodeState
+	for _, ns := range wf.Nodes {
+		nodes = append(nodes, &arlov1.NodeState{
+			NodeId:     ns.NodeID,
+			Status:     string(ns.Status),
+			SessionId:  ns.SessionID,
+			RuntimeId:  ns.RuntimeID,
+			RetryCount: int32(ns.RetryCount),
+			DependsOn:  ns.DependsOn,
+			Children:   ns.Children,
+			Gate:       ns.Gate,
+		})
+	}
+
+	version := s.eventStore.LastPosition()
+
+	return &arlov1.GetWorkflowSnapshotResponse{
+		WorkflowId: wf.ID,
+		Status:     string(wf.Status),
+		Version:    uint64(version),
+		Nodes:      nodes,
+		StartedAt:  wf.CreatedAt.Format(time.RFC3339),
 	}, nil
 }
 
