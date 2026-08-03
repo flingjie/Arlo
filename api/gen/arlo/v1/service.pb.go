@@ -627,6 +627,8 @@ type NodeState struct {
 	DependsOn     []string               `protobuf:"bytes,6,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
 	Children      []string               `protobuf:"bytes,7,rep,name=children,proto3" json:"children,omitempty"`
 	Gate          string                 `protobuf:"bytes,8,opt,name=gate,proto3" json:"gate,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,9,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	CompletedAt   string                 `protobuf:"bytes,10,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -713,6 +715,20 @@ func (x *NodeState) GetChildren() []string {
 func (x *NodeState) GetGate() string {
 	if x != nil {
 		return x.Gate
+	}
+	return ""
+}
+
+func (x *NodeState) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *NodeState) GetCompletedAt() string {
+	if x != nil {
+		return x.CompletedAt
 	}
 	return ""
 }

@@ -70,7 +70,9 @@ func main() {
 
 	// ── Step 6: Runtime & Workspace ──────────────
 	rtMgr := runtime.NewManager()
-	rtMgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, runtime.NewClaudeAdapter())
+	claudeAdapter := runtime.NewClaudeAdapter()
+	claudeAdapter.SetManager(rtMgr)
+	rtMgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, claudeAdapter)
 
 	wsMgr := workspace.NewManager()
 	_ = wsMgr // workspace provider registered lazily on first use

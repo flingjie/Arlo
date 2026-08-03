@@ -101,6 +101,8 @@ message NodeState {
   repeated string depends_on = 6;
   repeated string children = 7;
   string gate = 8;
+  string started_at = 9;
+  string completed_at = 10;
 }
 
 // ── Session ────────────────────────────────────

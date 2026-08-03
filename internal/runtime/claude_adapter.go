@@ -17,6 +17,7 @@ import (
 type ClaudeAdapter struct {
 	instances map[string]*claudeInstance
 	mu        sync.RWMutex
+	mgr       *Manager // set after construction for exit notification
 }
 
 // claudeInstance tracks a running Claude process.
@@ -31,6 +32,11 @@ func NewClaudeAdapter() *ClaudeAdapter {
 	return &ClaudeAdapter{
 		instances: make(map[string]*claudeInstance),
 	}
+}
+
+// SetManager wires the adapter to the Manager for exit notification.
+func (a *ClaudeAdapter) SetManager(mgr *Manager) {
+	a.mgr = mgr
 }
 
 // Prepare validates that the Claude CLI is available.
@@ -101,11 +107,21 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 		go bufio.NewReader(stdout).WriteTo(io.Discard)
 		go bufio.NewReader(stderr).WriteTo(io.Discard)
 
-		cmd.Wait()
+		err := cmd.Wait()
 
-		a.mu.Lock()
-		delete(a.instances, inst.ID)
-		a.mu.Unlock()
+		exitCode := 0
+		if err != nil {
+			if ee, ok := err.(*exec.ExitError); ok {
+				exitCode = ee.ExitCode()
+			} else {
+				exitCode = 1
+			}
+		}
+
+		// Notify the Manager so the reconciler can detect the exit.
+		if a.mgr != nil {
+			a.mgr.MarkExited(inst.ID, exitCode)
+		}
 	}()
 
 	return nil
