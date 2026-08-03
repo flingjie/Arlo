@@ -10,6 +10,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -211,6 +212,11 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 			continue
 		}
 
+		// Don't start WAITING nodes (they need human input).
+		if ns.Status == domain.NodeStatusWaiting {
+			continue
+		}
+
 		// Check dependencies using the original graph.
 		if !depsSatisfied(ns.NodeID, graph, state) {
 			continue
@@ -223,7 +229,67 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 		})
 	}
 
+	// Check for conditional transitions (v0.2).
+	// After all normal evaluations, check if any completed node has
+	// a Transition that should activate another node.
+	for _, ns := range state.Nodes {
+		if ns.Status != domain.NodeStatusCompleted {
+			continue
+		}
+		nodeMap := buildNodeMap(graph)
+		node, ok := nodeMap[ns.NodeID]
+		if !ok {
+			continue
+		}
+		for _, tr := range node.Transitions {
+			if tr.When == "" || evaluateCondition(tr.When, ns) {
+				// Activate the target node by adding a pending entry.
+				targetState, exists := state.Nodes[tr.To]
+				if exists && targetState.Status == domain.NodeStatusPending {
+					decisions = append(decisions, domain.Decision{
+						Action: domain.DecisionStartNode,
+						NodeID: tr.To,
+						Reason: "conditional transition from " + ns.NodeID,
+					})
+				}
+				_ = targetState // used for checking existence
+			}
+		}
+	}
+
 	return decisions, nil
+}
+
+// buildNodeMap creates an ID→Node lookup from the graph.
+func buildNodeMap(graph *domain.ExecutableGraph) map[string]domain.ExecutableNode {
+	m := make(map[string]domain.ExecutableNode)
+	for _, n := range graph.Nodes {
+		m[n.ID] = n
+	}
+	return m
+}
+
+// evaluateCondition evaluates a simple expression against a node's output.
+// In v0.2, supports: "verdict != APPROVED", "verdict == APPROVED", and truthy checks.
+func evaluateCondition(expr string, ns domain.NodeState) bool {
+	// Simple evaluation: check if a key in Output doesn't equal a value.
+	if strings.Contains(expr, "!=") {
+		parts := strings.SplitN(expr, "!=", 2)
+		key := strings.TrimSpace(parts[0])
+		want := strings.TrimSpace(parts[1])
+		val, ok := ns.Output[key]
+		return !ok || val != want
+	}
+	if strings.Contains(expr, "==") {
+		parts := strings.SplitN(expr, "==", 2)
+		key := strings.TrimSpace(parts[0])
+		want := strings.TrimSpace(parts[1])
+		val, ok := ns.Output[key]
+		return ok && val == want
+	}
+	// Default: truthy check — if the expression key exists in output.
+	_, ok := ns.Output[strings.TrimSpace(expr)]
+	return ok
 }
 
 // depsSatisfied checks whether all dependencies of a node are completed.
