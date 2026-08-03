@@ -47,10 +47,12 @@ type WorkflowChanged struct {
 
 // NodeCreated is the payload for NODE_CREATED events.
 type NodeCreated struct {
-	NodeID     string `json:"node_id"`
-	WorkflowID string `json:"workflow_id"`
-	SkillName  string `json:"skill_name"`
-	Runtime    string `json:"runtime"`
+	NodeID     string   `json:"node_id"`
+	WorkflowID string   `json:"workflow_id"`
+	SkillName  string   `json:"skill_name"`
+	Runtime    string   `json:"runtime"`
+	DependsOn  []string `json:"depends_on,omitempty"`
+	Gate       string   `json:"gate,omitempty"`
 }
 
 // NodeStarted is the payload for NODE_STARTED events.
