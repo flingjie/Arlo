@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package arlo.v1;
+
+option go_package = "github.com/lingjiefan/arlo/api/gen/arlo/v1;arlov1";
+
+// ── ArloService ────────────────────────────────
+
+service ArloService {
+  // Task
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // Workflow
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+
+  // Session
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // Event Stream (real-time state for TUI)
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+
+  // PTY
+  rpc AttachPTY(AttachPTYRequest) returns (stream PTYFrame);
+  rpc SendPTYInput(SendPTYInputRequest) returns (SendPTYInputResponse);
+
+  // Command (human-in-loop)
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+}
+
+// ── Task ────────────────────────────────────────
+
+message CreateTaskRequest {
+  string title = 1;
+  string description = 2;
+  string workflow_source = 3;  // YAML content
+}
+
+message CreateTaskResponse {
+  string task_id = 1;
+  string workflow_id = 2;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message GetTaskResponse {
+  string task_id = 1;
+  string title = 2;
+  string status = 3;
+  string workflow_id = 4;
+}
+
+message ListTasksRequest {}
+
+message ListTasksResponse {
+  repeated TaskSummary tasks = 1;
+}
+
+message TaskSummary {
+  string task_id = 1;
+  string title = 2;
+  string status = 3;
+  string workflow_id = 4;
+}
+
+// ── Workflow ───────────────────────────────────
+
+message GetWorkflowRequest {
+  string workflow_id = 1;
+}
+
+message GetWorkflowResponse {
+  string workflow_id = 1;
+  string status = 2;
+  repeated NodeState nodes = 3;
+}
+
+message NodeState {
+  string node_id = 1;
+  string status = 2;
+  string session_id = 3;
+  string runtime_id = 4;
+  int32 retry_count = 5;
+}
+
+// ── Session ────────────────────────────────────
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message GetSessionResponse {
+  string session_id = 1;
+  string node_id = 2;
+  string workflow_id = 3;
+  string status = 4;
+  int32 attempt = 5;
+}
+
+message ListSessionsRequest {
+  string workflow_id = 1;
+}
+
+message ListSessionsResponse {
+  repeated SessionSummary sessions = 1;
+}
+
+message SessionSummary {
+  string session_id = 1;
+  string node_id = 2;
+  string status = 3;
+  int32 attempt = 4;
+}
+
+// ── Event Stream ───────────────────────────────
+
+message SubscribeEventsRequest {
+  string workflow_id = 1;  // empty = all workflows
+  int64 from_position = 2;  // 0 = latest
+}
+
+message Event {
+  string event_id = 1;
+  string stream_id = 2;
+  int32 version = 3;
+  int64 position = 4;
+  string type = 5;
+  bytes payload = 6;
+  string timestamp = 7;
+}
+
+// ── PTY ────────────────────────────────────────
+
+message AttachPTYRequest {
+  string session_id = 1;
+}
+
+message PTYFrame {
+  string session_id = 1;
+  bytes data = 2;
+  int64 seq = 3;
+}
+
+message SendPTYInputRequest {
+  string session_id = 1;
+  bytes data = 2;
+}
+
+message SendPTYInputResponse {}
+
+// ── Command ────────────────────────────────────
+
+message CommandRequest {
+  string command = 1;   // "approve", "reject", "cancel_task"
+  string target = 2;    // node_id or task_id
+  string input = 3;     // optional human input
+}
+
+message CommandResponse {
+  bool success = 1;
+  string message = 2;
+}
