@@ -1,0 +1,41 @@
+# Example: Standard bugfix workflow
+# arlo run bugfix.yaml
+
+name: bugfix
+version: 1
+description: "Analyze bug → implement fix → review changes"
+
+nodes:
+  - id: analyze
+    skill: root-cause
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    retry:
+      max_retries: 1
+      backoff: 10s
+
+  - id: implement
+    skill: implement-fix
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    depends_on:
+      - analyze
+    retry:
+      max_retries: 2
+      backoff: 30s
+
+  - id: review
+    skill: code-review
+    runtime:
+      provider: claude-code
+      model: claude-haiku-3.5
+    depends_on:
+      - implement
+    gate: human_approval
+    retry:
+      max_retries: 1
+
+policy:
+  max_concurrent_nodes: 1
