@@ -1,0 +1,111 @@
+# golangci-lint configuration for AgentOS (arlo)
+# Run: golangci-lint run
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  go: "1.26"
+
+linters:
+  enable:
+    # Default Go linters
+    - govet          # Go vet reports
+    - errcheck       # Unchecked errors
+    - staticcheck    # Static analysis (the modern go vet)
+    - gosimple       # Simplification suggestions
+    - unused         # Unused code
+    - ineffassign    # Ineffectual assignments
+    - typecheck      # Type-checking (parse + type-check Go code)
+
+    # Code quality
+    - revive         # Fast, configurable, extensible linter (replaces golint)
+    - gocyclo        # Cyclomatic complexity
+    - gocognit       # Cognitive complexity (better for event sourcing)
+    - goconst        # Repeated string constants
+    - misspell       # Spelling mistakes
+    - gofmt          # Whether code was gofmt-ed
+    - goimports      # Unused/missing imports
+    - unconvert      # Unnecessary type conversions
+    - unparam        # Unused function parameters
+    - prealloc       # Slice preallocation opportunities
+    - exportloopref  # Loop variable capture
+    - nilerr         # nil != nil checks
+    - exhaustive     # Exhaustive enum switch (important for event types)
+    - noctx          # http.Request without context
+    - forcetypeassert # Forced type assertions
+
+    # Security
+    - gosec          # Security issues
+
+  disable:
+    - exhaustruct    # Too noisy early on; enable once domain types stabilize
+    - depguard       # Not needed until dependency policy is defined
+    - godox          # Allow TODO/FIXME comments during development
+    - funlen         # Event sourcing often needs longer functions
+    - wrapcheck      # Too strict for early development
+    - tagliatelle    # Let the team settle on naming conventions first
+    - varnamelen     # Short names are idiomatic Go
+    - ireturn        # Interface returns are common in this architecture
+    - nlreturn       # Too opinionated
+    - wsl            # Whitespace linter — too opinionated
+    - lll            # Line length — let gofmt handle it
+
+linters-settings:
+  gocyclo:
+    min-complexity: 20
+
+  gocognit:
+    min-complexity: 25
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: package-comments
+        disabled: true  # Relax for rapid iteration
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gosec:
+    excludes:
+      - G104  # Audit errors (errcheck handles this)
+
+  exhaustive:
+    default-signifies-exhaustive: true
+
+  goimports:
+    local-prefixes: github.com/lingjiefan/arlo
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Exclude some linters from test files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - gocognit
+        - errcheck
+        - gosec
+        - forcetypeassert
+        - unparam
