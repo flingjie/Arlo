@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v5.29.3
-// source: service.proto
+// source: arlo/v1/service.proto
 
 package arlov1
 
@@ -19,16 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ArloService_CreateTask_FullMethodName      = "/arlo.v1.ArloService/CreateTask"
-	ArloService_GetTask_FullMethodName         = "/arlo.v1.ArloService/GetTask"
-	ArloService_ListTasks_FullMethodName       = "/arlo.v1.ArloService/ListTasks"
-	ArloService_GetWorkflow_FullMethodName     = "/arlo.v1.ArloService/GetWorkflow"
-	ArloService_GetSession_FullMethodName      = "/arlo.v1.ArloService/GetSession"
-	ArloService_ListSessions_FullMethodName    = "/arlo.v1.ArloService/ListSessions"
-	ArloService_SubscribeEvents_FullMethodName = "/arlo.v1.ArloService/SubscribeEvents"
-	ArloService_AttachPTY_FullMethodName       = "/arlo.v1.ArloService/AttachPTY"
-	ArloService_SendPTYInput_FullMethodName    = "/arlo.v1.ArloService/SendPTYInput"
-	ArloService_ExecuteCommand_FullMethodName  = "/arlo.v1.ArloService/ExecuteCommand"
+	ArloService_CreateTask_FullMethodName          = "/arlo.v1.ArloService/CreateTask"
+	ArloService_GetTask_FullMethodName             = "/arlo.v1.ArloService/GetTask"
+	ArloService_ListTasks_FullMethodName           = "/arlo.v1.ArloService/ListTasks"
+	ArloService_GetWorkflow_FullMethodName         = "/arlo.v1.ArloService/GetWorkflow"
+	ArloService_GetWorkflowSnapshot_FullMethodName = "/arlo.v1.ArloService/GetWorkflowSnapshot"
+	ArloService_GetSession_FullMethodName          = "/arlo.v1.ArloService/GetSession"
+	ArloService_ListSessions_FullMethodName        = "/arlo.v1.ArloService/ListSessions"
+	ArloService_SubscribeEvents_FullMethodName     = "/arlo.v1.ArloService/SubscribeEvents"
+	ArloService_AttachPTY_FullMethodName           = "/arlo.v1.ArloService/AttachPTY"
+	ArloService_SendPTYInput_FullMethodName        = "/arlo.v1.ArloService/SendPTYInput"
+	ArloService_ExecuteCommand_FullMethodName      = "/arlo.v1.ArloService/ExecuteCommand"
 )
 
 // ArloServiceClient is the client API for ArloService service.
@@ -41,6 +42,7 @@ type ArloServiceClient interface {
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
 	// Workflow
 	GetWorkflow(ctx context.Context, in *GetWorkflowRequest, opts ...grpc.CallOption) (*GetWorkflowResponse, error)
+	GetWorkflowSnapshot(ctx context.Context, in *GetWorkflowSnapshotRequest, opts ...grpc.CallOption) (*GetWorkflowSnapshotResponse, error)
 	// Session
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
@@ -95,6 +97,16 @@ func (c *arloServiceClient) GetWorkflow(ctx context.Context, in *GetWorkflowRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetWorkflowResponse)
 	err := c.cc.Invoke(ctx, ArloService_GetWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *arloServiceClient) GetWorkflowSnapshot(ctx context.Context, in *GetWorkflowSnapshotRequest, opts ...grpc.CallOption) (*GetWorkflowSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWorkflowSnapshotResponse)
+	err := c.cc.Invoke(ctx, ArloService_GetWorkflowSnapshot_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +201,7 @@ type ArloServiceServer interface {
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
 	// Workflow
 	GetWorkflow(context.Context, *GetWorkflowRequest) (*GetWorkflowResponse, error)
+	GetWorkflowSnapshot(context.Context, *GetWorkflowSnapshotRequest) (*GetWorkflowSnapshotResponse, error)
 	// Session
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
@@ -220,6 +233,9 @@ func (UnimplementedArloServiceServer) ListTasks(context.Context, *ListTasksReque
 }
 func (UnimplementedArloServiceServer) GetWorkflow(context.Context, *GetWorkflowRequest) (*GetWorkflowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWorkflow not implemented")
+}
+func (UnimplementedArloServiceServer) GetWorkflowSnapshot(context.Context, *GetWorkflowSnapshotRequest) (*GetWorkflowSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkflowSnapshot not implemented")
 }
 func (UnimplementedArloServiceServer) GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSession not implemented")
@@ -328,6 +344,24 @@ func _ArloService_GetWorkflow_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ArloServiceServer).GetWorkflow(ctx, req.(*GetWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ArloService_GetWorkflowSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkflowSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArloServiceServer).GetWorkflowSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ArloService_GetWorkflowSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArloServiceServer).GetWorkflowSnapshot(ctx, req.(*GetWorkflowSnapshotRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -450,6 +484,10 @@ var ArloService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ArloService_GetWorkflow_Handler,
 		},
 		{
+			MethodName: "GetWorkflowSnapshot",
+			Handler:    _ArloService_GetWorkflowSnapshot_Handler,
+		},
+		{
 			MethodName: "GetSession",
 			Handler:    _ArloService_GetSession_Handler,
 		},
@@ -478,5 +516,5 @@ var ArloService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "service.proto",
+	Metadata: "arlo/v1/service.proto",
 }

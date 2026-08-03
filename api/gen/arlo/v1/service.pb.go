@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v5.29.3
-// source: service.proto
+// source: arlo/v1/service.proto
 
 package arlov1
 
@@ -32,7 +32,7 @@ type CreateTaskRequest struct {
 
 func (x *CreateTaskRequest) Reset() {
 	*x = CreateTaskRequest{}
-	mi := &file_service_proto_msgTypes[0]
+	mi := &file_arlo_v1_service_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *CreateTaskRequest) String() string {
 func (*CreateTaskRequest) ProtoMessage() {}
 
 func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[0]
+	mi := &file_arlo_v1_service_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -57,7 +57,7 @@ func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTaskRequest.ProtoReflect.Descriptor instead.
 func (*CreateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{0}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CreateTaskRequest) GetTitle() string {
@@ -91,7 +91,7 @@ type CreateTaskResponse struct {
 
 func (x *CreateTaskResponse) Reset() {
 	*x = CreateTaskResponse{}
-	mi := &file_service_proto_msgTypes[1]
+	mi := &file_arlo_v1_service_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -103,7 +103,7 @@ func (x *CreateTaskResponse) String() string {
 func (*CreateTaskResponse) ProtoMessage() {}
 
 func (x *CreateTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[1]
+	mi := &file_arlo_v1_service_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -116,7 +116,7 @@ func (x *CreateTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTaskResponse.ProtoReflect.Descriptor instead.
 func (*CreateTaskResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{1}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreateTaskResponse) GetTaskId() string {
@@ -142,7 +142,7 @@ type GetTaskRequest struct {
 
 func (x *GetTaskRequest) Reset() {
 	*x = GetTaskRequest{}
-	mi := &file_service_proto_msgTypes[2]
+	mi := &file_arlo_v1_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -154,7 +154,7 @@ func (x *GetTaskRequest) String() string {
 func (*GetTaskRequest) ProtoMessage() {}
 
 func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[2]
+	mi := &file_arlo_v1_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -167,7 +167,7 @@ func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{2}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *GetTaskRequest) GetTaskId() string {
@@ -189,7 +189,7 @@ type GetTaskResponse struct {
 
 func (x *GetTaskResponse) Reset() {
 	*x = GetTaskResponse{}
-	mi := &file_service_proto_msgTypes[3]
+	mi := &file_arlo_v1_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -201,7 +201,7 @@ func (x *GetTaskResponse) String() string {
 func (*GetTaskResponse) ProtoMessage() {}
 
 func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[3]
+	mi := &file_arlo_v1_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -214,7 +214,7 @@ func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{3}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetTaskResponse) GetTaskId() string {
@@ -253,7 +253,7 @@ type ListTasksRequest struct {
 
 func (x *ListTasksRequest) Reset() {
 	*x = ListTasksRequest{}
-	mi := &file_service_proto_msgTypes[4]
+	mi := &file_arlo_v1_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -265,7 +265,7 @@ func (x *ListTasksRequest) String() string {
 func (*ListTasksRequest) ProtoMessage() {}
 
 func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[4]
+	mi := &file_arlo_v1_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -278,7 +278,7 @@ func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksRequest.ProtoReflect.Descriptor instead.
 func (*ListTasksRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{4}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{4}
 }
 
 type ListTasksResponse struct {
@@ -290,7 +290,7 @@ type ListTasksResponse struct {
 
 func (x *ListTasksResponse) Reset() {
 	*x = ListTasksResponse{}
-	mi := &file_service_proto_msgTypes[5]
+	mi := &file_arlo_v1_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -302,7 +302,7 @@ func (x *ListTasksResponse) String() string {
 func (*ListTasksResponse) ProtoMessage() {}
 
 func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[5]
+	mi := &file_arlo_v1_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -315,7 +315,7 @@ func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksResponse.ProtoReflect.Descriptor instead.
 func (*ListTasksResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{5}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListTasksResponse) GetTasks() []*TaskSummary {
@@ -337,7 +337,7 @@ type TaskSummary struct {
 
 func (x *TaskSummary) Reset() {
 	*x = TaskSummary{}
-	mi := &file_service_proto_msgTypes[6]
+	mi := &file_arlo_v1_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -349,7 +349,7 @@ func (x *TaskSummary) String() string {
 func (*TaskSummary) ProtoMessage() {}
 
 func (x *TaskSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[6]
+	mi := &file_arlo_v1_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -362,7 +362,7 @@ func (x *TaskSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSummary.ProtoReflect.Descriptor instead.
 func (*TaskSummary) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{6}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TaskSummary) GetTaskId() string {
@@ -402,7 +402,7 @@ type GetWorkflowRequest struct {
 
 func (x *GetWorkflowRequest) Reset() {
 	*x = GetWorkflowRequest{}
-	mi := &file_service_proto_msgTypes[7]
+	mi := &file_arlo_v1_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -414,7 +414,7 @@ func (x *GetWorkflowRequest) String() string {
 func (*GetWorkflowRequest) ProtoMessage() {}
 
 func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[7]
+	mi := &file_arlo_v1_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -427,7 +427,7 @@ func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{7}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetWorkflowRequest) GetWorkflowId() string {
@@ -448,7 +448,7 @@ type GetWorkflowResponse struct {
 
 func (x *GetWorkflowResponse) Reset() {
 	*x = GetWorkflowResponse{}
-	mi := &file_service_proto_msgTypes[8]
+	mi := &file_arlo_v1_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -460,7 +460,7 @@ func (x *GetWorkflowResponse) String() string {
 func (*GetWorkflowResponse) ProtoMessage() {}
 
 func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[8]
+	mi := &file_arlo_v1_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +473,7 @@ func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{8}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetWorkflowResponse) GetWorkflowId() string {
@@ -497,6 +497,126 @@ func (x *GetWorkflowResponse) GetNodes() []*NodeState {
 	return nil
 }
 
+type GetWorkflowSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowId    string                 `protobuf:"bytes,1,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWorkflowSnapshotRequest) Reset() {
+	*x = GetWorkflowSnapshotRequest{}
+	mi := &file_arlo_v1_service_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkflowSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkflowSnapshotRequest) ProtoMessage() {}
+
+func (x *GetWorkflowSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_arlo_v1_service_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkflowSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*GetWorkflowSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetWorkflowSnapshotRequest) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+type GetWorkflowSnapshotResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowId    string                 `protobuf:"bytes,1,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Version       uint64                 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	Nodes         []*NodeState           `protobuf:"bytes,4,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWorkflowSnapshotResponse) Reset() {
+	*x = GetWorkflowSnapshotResponse{}
+	mi := &file_arlo_v1_service_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkflowSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkflowSnapshotResponse) ProtoMessage() {}
+
+func (x *GetWorkflowSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_arlo_v1_service_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkflowSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*GetWorkflowSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetWorkflowSnapshotResponse) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *GetWorkflowSnapshotResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *GetWorkflowSnapshotResponse) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *GetWorkflowSnapshotResponse) GetNodes() []*NodeState {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *GetWorkflowSnapshotResponse) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
 type NodeState struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -504,13 +624,16 @@ type NodeState struct {
 	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	RuntimeId     string                 `protobuf:"bytes,4,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
 	RetryCount    int32                  `protobuf:"varint,5,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
+	DependsOn     []string               `protobuf:"bytes,6,rep,name=depends_on,json=dependsOn,proto3" json:"depends_on,omitempty"`
+	Children      []string               `protobuf:"bytes,7,rep,name=children,proto3" json:"children,omitempty"`
+	Gate          string                 `protobuf:"bytes,8,opt,name=gate,proto3" json:"gate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NodeState) Reset() {
 	*x = NodeState{}
-	mi := &file_service_proto_msgTypes[9]
+	mi := &file_arlo_v1_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -522,7 +645,7 @@ func (x *NodeState) String() string {
 func (*NodeState) ProtoMessage() {}
 
 func (x *NodeState) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[9]
+	mi := &file_arlo_v1_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -535,7 +658,7 @@ func (x *NodeState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeState.ProtoReflect.Descriptor instead.
 func (*NodeState) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{9}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NodeState) GetNodeId() string {
@@ -573,6 +696,27 @@ func (x *NodeState) GetRetryCount() int32 {
 	return 0
 }
 
+func (x *NodeState) GetDependsOn() []string {
+	if x != nil {
+		return x.DependsOn
+	}
+	return nil
+}
+
+func (x *NodeState) GetChildren() []string {
+	if x != nil {
+		return x.Children
+	}
+	return nil
+}
+
+func (x *NodeState) GetGate() string {
+	if x != nil {
+		return x.Gate
+	}
+	return ""
+}
+
 type GetSessionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -582,7 +726,7 @@ type GetSessionRequest struct {
 
 func (x *GetSessionRequest) Reset() {
 	*x = GetSessionRequest{}
-	mi := &file_service_proto_msgTypes[10]
+	mi := &file_arlo_v1_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -594,7 +738,7 @@ func (x *GetSessionRequest) String() string {
 func (*GetSessionRequest) ProtoMessage() {}
 
 func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[10]
+	mi := &file_arlo_v1_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -607,7 +751,7 @@ func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{10}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetSessionRequest) GetSessionId() string {
@@ -630,7 +774,7 @@ type GetSessionResponse struct {
 
 func (x *GetSessionResponse) Reset() {
 	*x = GetSessionResponse{}
-	mi := &file_service_proto_msgTypes[11]
+	mi := &file_arlo_v1_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -642,7 +786,7 @@ func (x *GetSessionResponse) String() string {
 func (*GetSessionResponse) ProtoMessage() {}
 
 func (x *GetSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[11]
+	mi := &file_arlo_v1_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -655,7 +799,7 @@ func (x *GetSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionResponse.ProtoReflect.Descriptor instead.
 func (*GetSessionResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{11}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetSessionResponse) GetSessionId() string {
@@ -702,7 +846,7 @@ type ListSessionsRequest struct {
 
 func (x *ListSessionsRequest) Reset() {
 	*x = ListSessionsRequest{}
-	mi := &file_service_proto_msgTypes[12]
+	mi := &file_arlo_v1_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -714,7 +858,7 @@ func (x *ListSessionsRequest) String() string {
 func (*ListSessionsRequest) ProtoMessage() {}
 
 func (x *ListSessionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[12]
+	mi := &file_arlo_v1_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -727,7 +871,7 @@ func (x *ListSessionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionsRequest.ProtoReflect.Descriptor instead.
 func (*ListSessionsRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{12}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListSessionsRequest) GetWorkflowId() string {
@@ -746,7 +890,7 @@ type ListSessionsResponse struct {
 
 func (x *ListSessionsResponse) Reset() {
 	*x = ListSessionsResponse{}
-	mi := &file_service_proto_msgTypes[13]
+	mi := &file_arlo_v1_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -758,7 +902,7 @@ func (x *ListSessionsResponse) String() string {
 func (*ListSessionsResponse) ProtoMessage() {}
 
 func (x *ListSessionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[13]
+	mi := &file_arlo_v1_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -771,7 +915,7 @@ func (x *ListSessionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionsResponse.ProtoReflect.Descriptor instead.
 func (*ListSessionsResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{13}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListSessionsResponse) GetSessions() []*SessionSummary {
@@ -793,7 +937,7 @@ type SessionSummary struct {
 
 func (x *SessionSummary) Reset() {
 	*x = SessionSummary{}
-	mi := &file_service_proto_msgTypes[14]
+	mi := &file_arlo_v1_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -805,7 +949,7 @@ func (x *SessionSummary) String() string {
 func (*SessionSummary) ProtoMessage() {}
 
 func (x *SessionSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[14]
+	mi := &file_arlo_v1_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +962,7 @@ func (x *SessionSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionSummary.ProtoReflect.Descriptor instead.
 func (*SessionSummary) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{14}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SessionSummary) GetSessionId() string {
@@ -859,7 +1003,7 @@ type SubscribeEventsRequest struct {
 
 func (x *SubscribeEventsRequest) Reset() {
 	*x = SubscribeEventsRequest{}
-	mi := &file_service_proto_msgTypes[15]
+	mi := &file_arlo_v1_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +1015,7 @@ func (x *SubscribeEventsRequest) String() string {
 func (*SubscribeEventsRequest) ProtoMessage() {}
 
 func (x *SubscribeEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[15]
+	mi := &file_arlo_v1_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +1028,7 @@ func (x *SubscribeEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeEventsRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeEventsRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{15}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SubscribeEventsRequest) GetWorkflowId() string {
@@ -916,7 +1060,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_service_proto_msgTypes[16]
+	mi := &file_arlo_v1_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -928,7 +1072,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[16]
+	mi := &file_arlo_v1_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -941,7 +1085,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{16}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Event) GetEventId() string {
@@ -1002,7 +1146,7 @@ type AttachPTYRequest struct {
 
 func (x *AttachPTYRequest) Reset() {
 	*x = AttachPTYRequest{}
-	mi := &file_service_proto_msgTypes[17]
+	mi := &file_arlo_v1_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1014,7 +1158,7 @@ func (x *AttachPTYRequest) String() string {
 func (*AttachPTYRequest) ProtoMessage() {}
 
 func (x *AttachPTYRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[17]
+	mi := &file_arlo_v1_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1027,7 +1171,7 @@ func (x *AttachPTYRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachPTYRequest.ProtoReflect.Descriptor instead.
 func (*AttachPTYRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{17}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AttachPTYRequest) GetSessionId() string {
@@ -1048,7 +1192,7 @@ type PTYFrame struct {
 
 func (x *PTYFrame) Reset() {
 	*x = PTYFrame{}
-	mi := &file_service_proto_msgTypes[18]
+	mi := &file_arlo_v1_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1060,7 +1204,7 @@ func (x *PTYFrame) String() string {
 func (*PTYFrame) ProtoMessage() {}
 
 func (x *PTYFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[18]
+	mi := &file_arlo_v1_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1073,7 +1217,7 @@ func (x *PTYFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PTYFrame.ProtoReflect.Descriptor instead.
 func (*PTYFrame) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{18}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *PTYFrame) GetSessionId() string {
@@ -1107,7 +1251,7 @@ type SendPTYInputRequest struct {
 
 func (x *SendPTYInputRequest) Reset() {
 	*x = SendPTYInputRequest{}
-	mi := &file_service_proto_msgTypes[19]
+	mi := &file_arlo_v1_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1119,7 +1263,7 @@ func (x *SendPTYInputRequest) String() string {
 func (*SendPTYInputRequest) ProtoMessage() {}
 
 func (x *SendPTYInputRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[19]
+	mi := &file_arlo_v1_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1132,7 +1276,7 @@ func (x *SendPTYInputRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPTYInputRequest.ProtoReflect.Descriptor instead.
 func (*SendPTYInputRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{19}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SendPTYInputRequest) GetSessionId() string {
@@ -1157,7 +1301,7 @@ type SendPTYInputResponse struct {
 
 func (x *SendPTYInputResponse) Reset() {
 	*x = SendPTYInputResponse{}
-	mi := &file_service_proto_msgTypes[20]
+	mi := &file_arlo_v1_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1169,7 +1313,7 @@ func (x *SendPTYInputResponse) String() string {
 func (*SendPTYInputResponse) ProtoMessage() {}
 
 func (x *SendPTYInputResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[20]
+	mi := &file_arlo_v1_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1182,7 +1326,7 @@ func (x *SendPTYInputResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendPTYInputResponse.ProtoReflect.Descriptor instead.
 func (*SendPTYInputResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{20}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{22}
 }
 
 type CommandRequest struct {
@@ -1196,7 +1340,7 @@ type CommandRequest struct {
 
 func (x *CommandRequest) Reset() {
 	*x = CommandRequest{}
-	mi := &file_service_proto_msgTypes[21]
+	mi := &file_arlo_v1_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1208,7 +1352,7 @@ func (x *CommandRequest) String() string {
 func (*CommandRequest) ProtoMessage() {}
 
 func (x *CommandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[21]
+	mi := &file_arlo_v1_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1221,7 +1365,7 @@ func (x *CommandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandRequest.ProtoReflect.Descriptor instead.
 func (*CommandRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{21}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CommandRequest) GetCommand() string {
@@ -1255,7 +1399,7 @@ type CommandResponse struct {
 
 func (x *CommandResponse) Reset() {
 	*x = CommandResponse{}
-	mi := &file_service_proto_msgTypes[22]
+	mi := &file_arlo_v1_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1267,7 +1411,7 @@ func (x *CommandResponse) String() string {
 func (*CommandResponse) ProtoMessage() {}
 
 func (x *CommandResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[22]
+	mi := &file_arlo_v1_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1280,7 +1424,7 @@ func (x *CommandResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResponse.ProtoReflect.Descriptor instead.
 func (*CommandResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{22}
+	return file_arlo_v1_service_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CommandResponse) GetSuccess() bool {
@@ -1297,11 +1441,11 @@ func (x *CommandResponse) GetMessage() string {
 	return ""
 }
 
-var File_service_proto protoreflect.FileDescriptor
+var File_arlo_v1_service_proto protoreflect.FileDescriptor
 
-const file_service_proto_rawDesc = "" +
+const file_arlo_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\rservice.proto\x12\aarlo.v1\"t\n" +
+	"\x15arlo/v1/service.proto\x12\aarlo.v1\"t\n" +
 	"\x11CreateTaskRequest\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12'\n" +
@@ -1334,7 +1478,18 @@ const file_service_proto_rawDesc = "" +
 	"\vworkflow_id\x18\x01 \x01(\tR\n" +
 	"workflowId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12(\n" +
-	"\x05nodes\x18\x03 \x03(\v2\x12.arlo.v1.NodeStateR\x05nodes\"\x9b\x01\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x12.arlo.v1.NodeStateR\x05nodes\"=\n" +
+	"\x1aGetWorkflowSnapshotRequest\x12\x1f\n" +
+	"\vworkflow_id\x18\x01 \x01(\tR\n" +
+	"workflowId\"\xb9\x01\n" +
+	"\x1bGetWorkflowSnapshotResponse\x12\x1f\n" +
+	"\vworkflow_id\x18\x01 \x01(\tR\n" +
+	"workflowId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x04R\aversion\x12(\n" +
+	"\x05nodes\x18\x04 \x03(\v2\x12.arlo.v1.NodeStateR\x05nodes\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x05 \x01(\tR\tstartedAt\"\xea\x01\n" +
 	"\tNodeState\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
@@ -1343,7 +1498,11 @@ const file_service_proto_rawDesc = "" +
 	"\n" +
 	"runtime_id\x18\x04 \x01(\tR\truntimeId\x12\x1f\n" +
 	"\vretry_count\x18\x05 \x01(\x05R\n" +
-	"retryCount\"2\n" +
+	"retryCount\x12\x1d\n" +
+	"\n" +
+	"depends_on\x18\x06 \x03(\tR\tdependsOn\x12\x1a\n" +
+	"\bchildren\x18\a \x03(\tR\bchildren\x12\x12\n" +
+	"\x04gate\x18\b \x01(\tR\x04gate\"2\n" +
 	"\x11GetSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x9f\x01\n" +
@@ -1397,13 +1556,14 @@ const file_service_proto_rawDesc = "" +
 	"\x05input\x18\x03 \x01(\tR\x05input\"E\n" +
 	"\x0fCommandResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xc9\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xab\x06\n" +
 	"\vArloService\x12E\n" +
 	"\n" +
 	"CreateTask\x12\x1a.arlo.v1.CreateTaskRequest\x1a\x1b.arlo.v1.CreateTaskResponse\x12<\n" +
 	"\aGetTask\x12\x17.arlo.v1.GetTaskRequest\x1a\x18.arlo.v1.GetTaskResponse\x12B\n" +
 	"\tListTasks\x12\x19.arlo.v1.ListTasksRequest\x1a\x1a.arlo.v1.ListTasksResponse\x12H\n" +
-	"\vGetWorkflow\x12\x1b.arlo.v1.GetWorkflowRequest\x1a\x1c.arlo.v1.GetWorkflowResponse\x12E\n" +
+	"\vGetWorkflow\x12\x1b.arlo.v1.GetWorkflowRequest\x1a\x1c.arlo.v1.GetWorkflowResponse\x12`\n" +
+	"\x13GetWorkflowSnapshot\x12#.arlo.v1.GetWorkflowSnapshotRequest\x1a$.arlo.v1.GetWorkflowSnapshotResponse\x12E\n" +
 	"\n" +
 	"GetSession\x12\x1a.arlo.v1.GetSessionRequest\x1a\x1b.arlo.v1.GetSessionResponse\x12K\n" +
 	"\fListSessions\x12\x1c.arlo.v1.ListSessionsRequest\x1a\x1d.arlo.v1.ListSessionsResponse\x12D\n" +
@@ -1413,94 +1573,99 @@ const file_service_proto_rawDesc = "" +
 	"\x0eExecuteCommand\x12\x17.arlo.v1.CommandRequest\x1a\x18.arlo.v1.CommandResponseB3Z1github.com/lingjiefan/arlo/api/gen/arlo/v1;arlov1b\x06proto3"
 
 var (
-	file_service_proto_rawDescOnce sync.Once
-	file_service_proto_rawDescData []byte
+	file_arlo_v1_service_proto_rawDescOnce sync.Once
+	file_arlo_v1_service_proto_rawDescData []byte
 )
 
-func file_service_proto_rawDescGZIP() []byte {
-	file_service_proto_rawDescOnce.Do(func() {
-		file_service_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)))
+func file_arlo_v1_service_proto_rawDescGZIP() []byte {
+	file_arlo_v1_service_proto_rawDescOnce.Do(func() {
+		file_arlo_v1_service_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_arlo_v1_service_proto_rawDesc), len(file_arlo_v1_service_proto_rawDesc)))
 	})
-	return file_service_proto_rawDescData
+	return file_arlo_v1_service_proto_rawDescData
 }
 
-var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
-var file_service_proto_goTypes = []any{
-	(*CreateTaskRequest)(nil),      // 0: arlo.v1.CreateTaskRequest
-	(*CreateTaskResponse)(nil),     // 1: arlo.v1.CreateTaskResponse
-	(*GetTaskRequest)(nil),         // 2: arlo.v1.GetTaskRequest
-	(*GetTaskResponse)(nil),        // 3: arlo.v1.GetTaskResponse
-	(*ListTasksRequest)(nil),       // 4: arlo.v1.ListTasksRequest
-	(*ListTasksResponse)(nil),      // 5: arlo.v1.ListTasksResponse
-	(*TaskSummary)(nil),            // 6: arlo.v1.TaskSummary
-	(*GetWorkflowRequest)(nil),     // 7: arlo.v1.GetWorkflowRequest
-	(*GetWorkflowResponse)(nil),    // 8: arlo.v1.GetWorkflowResponse
-	(*NodeState)(nil),              // 9: arlo.v1.NodeState
-	(*GetSessionRequest)(nil),      // 10: arlo.v1.GetSessionRequest
-	(*GetSessionResponse)(nil),     // 11: arlo.v1.GetSessionResponse
-	(*ListSessionsRequest)(nil),    // 12: arlo.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),   // 13: arlo.v1.ListSessionsResponse
-	(*SessionSummary)(nil),         // 14: arlo.v1.SessionSummary
-	(*SubscribeEventsRequest)(nil), // 15: arlo.v1.SubscribeEventsRequest
-	(*Event)(nil),                  // 16: arlo.v1.Event
-	(*AttachPTYRequest)(nil),       // 17: arlo.v1.AttachPTYRequest
-	(*PTYFrame)(nil),               // 18: arlo.v1.PTYFrame
-	(*SendPTYInputRequest)(nil),    // 19: arlo.v1.SendPTYInputRequest
-	(*SendPTYInputResponse)(nil),   // 20: arlo.v1.SendPTYInputResponse
-	(*CommandRequest)(nil),         // 21: arlo.v1.CommandRequest
-	(*CommandResponse)(nil),        // 22: arlo.v1.CommandResponse
+var file_arlo_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_arlo_v1_service_proto_goTypes = []any{
+	(*CreateTaskRequest)(nil),           // 0: arlo.v1.CreateTaskRequest
+	(*CreateTaskResponse)(nil),          // 1: arlo.v1.CreateTaskResponse
+	(*GetTaskRequest)(nil),              // 2: arlo.v1.GetTaskRequest
+	(*GetTaskResponse)(nil),             // 3: arlo.v1.GetTaskResponse
+	(*ListTasksRequest)(nil),            // 4: arlo.v1.ListTasksRequest
+	(*ListTasksResponse)(nil),           // 5: arlo.v1.ListTasksResponse
+	(*TaskSummary)(nil),                 // 6: arlo.v1.TaskSummary
+	(*GetWorkflowRequest)(nil),          // 7: arlo.v1.GetWorkflowRequest
+	(*GetWorkflowResponse)(nil),         // 8: arlo.v1.GetWorkflowResponse
+	(*GetWorkflowSnapshotRequest)(nil),  // 9: arlo.v1.GetWorkflowSnapshotRequest
+	(*GetWorkflowSnapshotResponse)(nil), // 10: arlo.v1.GetWorkflowSnapshotResponse
+	(*NodeState)(nil),                   // 11: arlo.v1.NodeState
+	(*GetSessionRequest)(nil),           // 12: arlo.v1.GetSessionRequest
+	(*GetSessionResponse)(nil),          // 13: arlo.v1.GetSessionResponse
+	(*ListSessionsRequest)(nil),         // 14: arlo.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),        // 15: arlo.v1.ListSessionsResponse
+	(*SessionSummary)(nil),              // 16: arlo.v1.SessionSummary
+	(*SubscribeEventsRequest)(nil),      // 17: arlo.v1.SubscribeEventsRequest
+	(*Event)(nil),                       // 18: arlo.v1.Event
+	(*AttachPTYRequest)(nil),            // 19: arlo.v1.AttachPTYRequest
+	(*PTYFrame)(nil),                    // 20: arlo.v1.PTYFrame
+	(*SendPTYInputRequest)(nil),         // 21: arlo.v1.SendPTYInputRequest
+	(*SendPTYInputResponse)(nil),        // 22: arlo.v1.SendPTYInputResponse
+	(*CommandRequest)(nil),              // 23: arlo.v1.CommandRequest
+	(*CommandResponse)(nil),             // 24: arlo.v1.CommandResponse
 }
-var file_service_proto_depIdxs = []int32{
+var file_arlo_v1_service_proto_depIdxs = []int32{
 	6,  // 0: arlo.v1.ListTasksResponse.tasks:type_name -> arlo.v1.TaskSummary
-	9,  // 1: arlo.v1.GetWorkflowResponse.nodes:type_name -> arlo.v1.NodeState
-	14, // 2: arlo.v1.ListSessionsResponse.sessions:type_name -> arlo.v1.SessionSummary
-	0,  // 3: arlo.v1.ArloService.CreateTask:input_type -> arlo.v1.CreateTaskRequest
-	2,  // 4: arlo.v1.ArloService.GetTask:input_type -> arlo.v1.GetTaskRequest
-	4,  // 5: arlo.v1.ArloService.ListTasks:input_type -> arlo.v1.ListTasksRequest
-	7,  // 6: arlo.v1.ArloService.GetWorkflow:input_type -> arlo.v1.GetWorkflowRequest
-	10, // 7: arlo.v1.ArloService.GetSession:input_type -> arlo.v1.GetSessionRequest
-	12, // 8: arlo.v1.ArloService.ListSessions:input_type -> arlo.v1.ListSessionsRequest
-	15, // 9: arlo.v1.ArloService.SubscribeEvents:input_type -> arlo.v1.SubscribeEventsRequest
-	17, // 10: arlo.v1.ArloService.AttachPTY:input_type -> arlo.v1.AttachPTYRequest
-	19, // 11: arlo.v1.ArloService.SendPTYInput:input_type -> arlo.v1.SendPTYInputRequest
-	21, // 12: arlo.v1.ArloService.ExecuteCommand:input_type -> arlo.v1.CommandRequest
-	1,  // 13: arlo.v1.ArloService.CreateTask:output_type -> arlo.v1.CreateTaskResponse
-	3,  // 14: arlo.v1.ArloService.GetTask:output_type -> arlo.v1.GetTaskResponse
-	5,  // 15: arlo.v1.ArloService.ListTasks:output_type -> arlo.v1.ListTasksResponse
-	8,  // 16: arlo.v1.ArloService.GetWorkflow:output_type -> arlo.v1.GetWorkflowResponse
-	11, // 17: arlo.v1.ArloService.GetSession:output_type -> arlo.v1.GetSessionResponse
-	13, // 18: arlo.v1.ArloService.ListSessions:output_type -> arlo.v1.ListSessionsResponse
-	16, // 19: arlo.v1.ArloService.SubscribeEvents:output_type -> arlo.v1.Event
-	18, // 20: arlo.v1.ArloService.AttachPTY:output_type -> arlo.v1.PTYFrame
-	20, // 21: arlo.v1.ArloService.SendPTYInput:output_type -> arlo.v1.SendPTYInputResponse
-	22, // 22: arlo.v1.ArloService.ExecuteCommand:output_type -> arlo.v1.CommandResponse
-	13, // [13:23] is the sub-list for method output_type
-	3,  // [3:13] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	11, // 1: arlo.v1.GetWorkflowResponse.nodes:type_name -> arlo.v1.NodeState
+	11, // 2: arlo.v1.GetWorkflowSnapshotResponse.nodes:type_name -> arlo.v1.NodeState
+	16, // 3: arlo.v1.ListSessionsResponse.sessions:type_name -> arlo.v1.SessionSummary
+	0,  // 4: arlo.v1.ArloService.CreateTask:input_type -> arlo.v1.CreateTaskRequest
+	2,  // 5: arlo.v1.ArloService.GetTask:input_type -> arlo.v1.GetTaskRequest
+	4,  // 6: arlo.v1.ArloService.ListTasks:input_type -> arlo.v1.ListTasksRequest
+	7,  // 7: arlo.v1.ArloService.GetWorkflow:input_type -> arlo.v1.GetWorkflowRequest
+	9,  // 8: arlo.v1.ArloService.GetWorkflowSnapshot:input_type -> arlo.v1.GetWorkflowSnapshotRequest
+	12, // 9: arlo.v1.ArloService.GetSession:input_type -> arlo.v1.GetSessionRequest
+	14, // 10: arlo.v1.ArloService.ListSessions:input_type -> arlo.v1.ListSessionsRequest
+	17, // 11: arlo.v1.ArloService.SubscribeEvents:input_type -> arlo.v1.SubscribeEventsRequest
+	19, // 12: arlo.v1.ArloService.AttachPTY:input_type -> arlo.v1.AttachPTYRequest
+	21, // 13: arlo.v1.ArloService.SendPTYInput:input_type -> arlo.v1.SendPTYInputRequest
+	23, // 14: arlo.v1.ArloService.ExecuteCommand:input_type -> arlo.v1.CommandRequest
+	1,  // 15: arlo.v1.ArloService.CreateTask:output_type -> arlo.v1.CreateTaskResponse
+	3,  // 16: arlo.v1.ArloService.GetTask:output_type -> arlo.v1.GetTaskResponse
+	5,  // 17: arlo.v1.ArloService.ListTasks:output_type -> arlo.v1.ListTasksResponse
+	8,  // 18: arlo.v1.ArloService.GetWorkflow:output_type -> arlo.v1.GetWorkflowResponse
+	10, // 19: arlo.v1.ArloService.GetWorkflowSnapshot:output_type -> arlo.v1.GetWorkflowSnapshotResponse
+	13, // 20: arlo.v1.ArloService.GetSession:output_type -> arlo.v1.GetSessionResponse
+	15, // 21: arlo.v1.ArloService.ListSessions:output_type -> arlo.v1.ListSessionsResponse
+	18, // 22: arlo.v1.ArloService.SubscribeEvents:output_type -> arlo.v1.Event
+	20, // 23: arlo.v1.ArloService.AttachPTY:output_type -> arlo.v1.PTYFrame
+	22, // 24: arlo.v1.ArloService.SendPTYInput:output_type -> arlo.v1.SendPTYInputResponse
+	24, // 25: arlo.v1.ArloService.ExecuteCommand:output_type -> arlo.v1.CommandResponse
+	15, // [15:26] is the sub-list for method output_type
+	4,  // [4:15] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
-func init() { file_service_proto_init() }
-func file_service_proto_init() {
-	if File_service_proto != nil {
+func init() { file_arlo_v1_service_proto_init() }
+func file_arlo_v1_service_proto_init() {
+	if File_arlo_v1_service_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_arlo_v1_service_proto_rawDesc), len(file_arlo_v1_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_service_proto_goTypes,
-		DependencyIndexes: file_service_proto_depIdxs,
-		MessageInfos:      file_service_proto_msgTypes,
+		GoTypes:           file_arlo_v1_service_proto_goTypes,
+		DependencyIndexes: file_arlo_v1_service_proto_depIdxs,
+		MessageInfos:      file_arlo_v1_service_proto_msgTypes,
 	}.Build()
-	File_service_proto = out.File
-	file_service_proto_goTypes = nil
-	file_service_proto_depIdxs = nil
+	File_arlo_v1_service_proto = out.File
+	file_arlo_v1_service_proto_goTypes = nil
+	file_arlo_v1_service_proto_depIdxs = nil
 }

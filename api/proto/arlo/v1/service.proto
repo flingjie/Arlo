@@ -14,6 +14,7 @@ service ArloService {
 
   // Workflow
   rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  rpc GetWorkflowSnapshot(GetWorkflowSnapshotRequest) returns (GetWorkflowSnapshotResponse);
 
   // Session
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
@@ -79,12 +80,27 @@ message GetWorkflowResponse {
   repeated NodeState nodes = 3;
 }
 
+message GetWorkflowSnapshotRequest {
+  string workflow_id = 1;
+}
+
+message GetWorkflowSnapshotResponse {
+  string workflow_id = 1;
+  string status = 2;
+  uint64 version = 3;
+  repeated NodeState nodes = 4;
+  string started_at = 5;
+}
+
 message NodeState {
   string node_id = 1;
   string status = 2;
   string session_id = 3;
   string runtime_id = 4;
   int32 retry_count = 5;
+  repeated string depends_on = 6;
+  repeated string children = 7;
+  string gate = 8;
 }
 
 // ── Session ────────────────────────────────────
