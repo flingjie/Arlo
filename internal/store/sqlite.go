@@ -281,6 +281,13 @@ func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan
 	return sub.ch, nil
 }
 
+// LastPosition returns the current max global position.
+func (s *SQLiteStore) LastPosition() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastPosition
+}
+
 // Close gracefully shuts down the event store.
 func (s *SQLiteStore) Close() error {
 	s.mu.Lock()

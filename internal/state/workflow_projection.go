@@ -22,6 +22,10 @@ type InMemoryStateStore struct {
 	projections  map[string]Projection
 	workflows    map[string]*domain.WorkflowState // workflowID → state
 	nodeIndex    map[string]string                // nodeID → workflowID (reverse lookup)
+
+	// lastRebuiltPos tracks the last global position that was rebuilt.
+	// Rebuild() uses this to only replay new events, avoiding O(n²) behavior.
+	lastRebuiltPos int64
 }
 
 // NewInMemoryStateStore creates a new state store backed by the given Event Store.
@@ -115,21 +119,28 @@ func (ss *InMemoryStateStore) GetReadyNodes(ctx context.Context, workflowID stri
 	return ready, nil
 }
 
-// Rebuild replays all events from the Event Store to reconstruct projections.
-// It resets all projections and replays every event in position order.
-// The lock is not held during the full replay — individual Apply calls
-// acquire the lock themselves. This is safe because Rebuild is called at
-// startup before any concurrent readers exist.
+// Rebuild replays events from the Event Store to bring projections up to date.
+// On first call, it replays all events. On subsequent calls, it only replays
+// events since the last known position (incremental rebuild), avoiding O(n²).
+//
+// The lock is not held during the replay — individual Apply calls
+// acquire it themselves.
 func (ss *InMemoryStateStore) Rebuild(ctx context.Context) error {
-	// Reset all projections (requires lock for mutation).
-	ss.mu.Lock()
-	for _, proj := range ss.projections {
-		proj.Reset()
-	}
-	ss.mu.Unlock()
+	// Determine where to start replaying.
+	startPos := ss.lastRebuiltPos + 1
 
-	// Replay all events from position 1.
-	pos := int64(1)
+	// Only reset on a full rebuild (first call).
+	if ss.lastRebuiltPos == 0 {
+		ss.mu.Lock()
+		for _, proj := range ss.projections {
+			proj.Reset()
+		}
+		ss.mu.Unlock()
+		startPos = 1
+	}
+
+	// Replay events.
+	pos := startPos
 	for {
 		events, nextPos, err := ss.eventStore.ReadAll(ctx, pos, 1000)
 		if err != nil {
@@ -146,6 +157,14 @@ func (ss *InMemoryStateStore) Rebuild(ctx context.Context) error {
 			}
 		}
 		pos = nextPos
+	}
+
+	// Track the last position we've rebuilt to.
+	// nextPos is one past the last event; the last built position is the max
+	// event position we processed in the last batch.
+	currentPos := ss.eventStore.LastPosition()
+	if currentPos > ss.lastRebuiltPos {
+		ss.lastRebuiltPos = currentPos
 	}
 
 	return nil
@@ -206,11 +225,12 @@ func (p *workflowProjection) Apply(event store.Event) error {
 	// ── Task events ───────────────────────────────
 	case store.EventTaskCreated:
 		return p.applyTaskCreated(event)
-
-		case store.EventTaskCompleted:
-			return p.applyTaskCompleted(event)
-		case store.EventTaskFailed:
-			return p.applyTaskFailed(event)
+	case store.EventTaskCompleted:
+		return p.applyTaskCompleted(event)
+	case store.EventTaskFailed:
+		return p.applyTaskFailed(event)
+	case store.EventTaskCancelled:
+		return p.applyTaskCancelled(event)
 
 	// ── Workflow events ───────────────────────────
 	case store.EventWorkflowCreated:
@@ -227,6 +247,10 @@ func (p *workflowProjection) Apply(event store.Event) error {
 		return p.applyNodeFailed(event)
 	case store.EventNodeWaiting:
 		return p.applyNodeWaiting(event)
+
+	// ── Human interaction ─────────────────────────
+	case store.EventHumanInputReceived:
+		return p.applyHumanInputReceived(event)
 
 	default:
 		// Unknown event types are silently ignored — projections are
@@ -380,4 +404,35 @@ func (p *workflowProjection) applyTaskFailed(event store.Event) error {
 		wf.Status = domain.WorkflowStatusFailed
 	}
 	return nil
+}
+
+func (p *workflowProjection) applyTaskCancelled(event store.Event) error {
+	wfID := event.StreamID
+	if len(wfID) > 9 && wfID[:9] == "workflow-" {
+		wfID = wfID[9:]
+	}
+	if wf, ok := p.store.workflows[wfID]; ok {
+		wf.Status = domain.WorkflowStatusCancelled
+	}
+	return nil
+}
+
+func (p *workflowProjection) applyHumanInputReceived(event store.Event) error {
+	var payload domain.HumanInputReceived
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("unmarshal HumanInputReceived: %w", err)
+	}
+	// When human approves, the node should resume from WAITING to RUNNING.
+	for _, wf := range p.store.workflows {
+		if ns, ok := wf.Nodes[payload.NodeID]; ok {
+			if payload.Decision == "approve" {
+				ns.Status = domain.NodeStatusReady
+			} else {
+				ns.Status = domain.NodeStatusFailed
+			}
+			wf.Nodes[payload.NodeID] = ns
+			return nil
+		}
+	}
+	return fmt.Errorf("node %s not found for HumanInputReceived event", payload.NodeID)
 }

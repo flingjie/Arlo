@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
@@ -186,7 +187,10 @@ func (s *ArloService) GetWorkflow(ctx context.Context, req *arlov1.GetWorkflowRe
 func (s *ArloService) GetSession(ctx context.Context, req *arlov1.GetSessionRequest) (*arlov1.GetSessionResponse, error) {
 	// In v0.1, sessions are tracked via node state.
 	// Walk all workflows to find the session.
-	workflows, _ := s.stateStore.ListActiveWorkflows(ctx)
+	workflows, err := s.stateStore.ListActiveWorkflows(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
+	}
 	for _, wf := range workflows {
 		for _, ns := range wf.Nodes {
 			if ns.SessionID == req.SessionId {
@@ -241,7 +245,7 @@ func (s *ArloService) SubscribeEvents(req *arlov1.SubscribeEventsRequest, stream
 			if !ok {
 				return nil
 			}
-			if req.WorkflowId != "" && event.StreamID != "workflow-"+req.WorkflowId && event.StreamID != "node-"+req.WorkflowId {
+			if req.WorkflowId != "" && event.StreamID != "workflow-"+req.WorkflowId && !strings.HasPrefix(event.StreamID, "node-") {
 				continue // filter by workflow
 			}
 			if err := stream.Send(&arlov1.Event{
@@ -348,7 +352,12 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 // ── Helpers ──────────────────────────────────────
 
 func marshalJSON(v interface{}) []byte {
-	data, _ := json.Marshal(v)
+	data, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("marshalJSON: failed to marshal payload", "error", err, "type", fmt.Sprintf("%T", v))
+		// Return an empty JSON object rather than nil to prevent event store corruption.
+		return []byte("{}")
+	}
 	return data
 }
 

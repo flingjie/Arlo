@@ -92,8 +92,10 @@ func main() {
 	}()
 
 	// ── gRPC Server ──────────────────────────────
-	// Remove stale socket.
-	os.Remove(*socketPath)
+	// Remove stale socket file from a previous run.
+	if err := os.Remove(*socketPath); err != nil && !os.IsNotExist(err) {
+		slog.Warn("failed to remove stale socket", "path", *socketPath, "error", err)
+	}
 
 	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {

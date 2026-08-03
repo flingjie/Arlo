@@ -119,4 +119,8 @@ type EventStore interface {
 
 	// Close gracefully shuts down the event store, flushing any pending writes.
 	Close() error
+
+	// LastPosition returns the current max global position.
+	// Used by StateStore to know where to resume incremental rebuilds.
+	LastPosition() int64
 }
