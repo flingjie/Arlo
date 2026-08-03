@@ -28,6 +28,9 @@ type NodeState struct {
 	CompletedAt *time.Time        `json:"completed_at,omitempty"`
 	RetryCount  int               `json:"retry_count"`
 	Output      map[string]string `json:"output,omitempty"` // artifact name → artifact ID
+	DependsOn   []string          `json:"depends_on,omitempty"`
+	Children    []string          `json:"children,omitempty"`
+	Gate        string            `json:"gate,omitempty"`
 }
 
 // Decision represents an action the Reconciler should take.
