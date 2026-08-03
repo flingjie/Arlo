@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
+	"github.com/lingjiefan/arlo/internal/runtime"
 	"github.com/lingjiefan/arlo/internal/state"
 	"github.com/lingjiefan/arlo/internal/store"
 	"github.com/lingjiefan/arlo/internal/workflow"
+	"github.com/lingjiefan/arlo/internal/workspace"
 )
 
 // Reconciler is the control loop that drives the system toward desired state.
@@ -32,6 +34,9 @@ type Reconciler struct {
 	stateStore  state.StateStore
 	eventStore  store.EventStore
 	engine      *workflow.Engine
+		runtimeMgr   *runtime.Manager
+		workspaceMgr *workspace.Manager
+
 
 	// graphRegistry maps workflowID → compiled graph.
 	// The Reconciler needs both state and graph to evaluate.
@@ -45,11 +50,15 @@ func New(
 	stateStore state.StateStore,
 	eventStore store.EventStore,
 	engine *workflow.Engine,
+	runtimeMgr *runtime.Manager,
+	workspaceMgr *workspace.Manager,
 ) *Reconciler {
 	return &Reconciler{
 		stateStore:    stateStore,
 		eventStore:    eventStore,
 		engine:        engine,
+		runtimeMgr:    runtimeMgr,
+		workspaceMgr:  workspaceMgr,
 		graphRegistry: make(map[string]*domain.ExecutableGraph),
 		tickInterval:  5 * time.Second,
 	}
@@ -187,6 +196,33 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 		"session", sessionID,
 		"reason", d.Reason,
 	)
+
+	// Actually launch the agent runtime (v0.2).
+	if r.runtimeMgr != nil {
+		graph := r.graphRegistry[workflowID]
+		if graph != nil {
+			// Find the node in the graph to get runtime config.
+			for _, n := range graph.Nodes {
+				if n.ID == d.NodeID {
+					_, err := r.runtimeMgr.StartInstance(ctx, runtime.RuntimeSpec{
+						InstanceID:  fmt.Sprintf("rt-%s-%d", d.NodeID, ns.RetryCount+1),
+						Type:        n.Runtime.Provider,
+						Config: domain.RuntimeConfig{
+							Model:          n.Runtime.Model,
+							PermissionMode: "auto",
+						},
+						SessionID: sessionID,
+						WorkDir:    "/tmp",
+						Prompt:     "Run skill: " + n.SkillRef.Name,
+					})
+					if err != nil {
+						slog.Warn("failed to launch runtime", "node", d.NodeID, "error", err)
+					}
+					break
+				}
+			}
+		}
+	}
 
 	return nil
 }

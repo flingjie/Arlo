@@ -76,7 +76,7 @@ func main() {
 	// In production: wsMgr.RegisterProvider("tmux", workspace.NewTmuxProvider("arlo"))
 
 	// ── Step 5: Reconciler ───────────────────────
-	rec := reconciler.New(ss, es, eng)
+	rec := reconciler.New(ss, es, eng, rtMgr, wsMgr)
 
 	// ── gRPC Service ─────────────────────────────
 	svc := service.New(es, ss, eng, rec, rtMgr, wsMgr)
