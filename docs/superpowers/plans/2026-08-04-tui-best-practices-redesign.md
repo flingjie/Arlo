@@ -102,19 +102,19 @@
 
 ### Task 5: Workflow detail toggle + column collapse
 
-- [ ] `Space` toggles session/gate detail; `-`/`+` (and Workflow-focused `←`/`→`) collapse column; tests
+- [x] `Space` toggles session/gate detail; `-`/`+` (and Workflow-focused `←`/`→`) collapse column; tests
 
 ### Task 6: Timeline follow / compact / expand
 
-- [ ] Follow default on; scroll pauses; `s` resumes; `c` compact; truncate + `→` expand; tests
+- [x] Follow default on; scroll pauses; `s` resumes; `c` compact; truncate + `→` expand; tests
 
 ### Task 7: Inspector polish + responsive layout
 
-- [ ] Width &lt;100 hide inspector (`i` overlay); &lt;70 single pane; node-scoped inspector; `Launching…` empty state; tests
+- [x] Width &lt;100 hide inspector (`i` overlay); &lt;70 single pane; node-scoped inspector; `Launching…` empty state; tests
 
 ### Task 8: Regression
 
-- [ ] `go test -race ./internal/tui/`
+- [x] `go test -race ./internal/tui/`
 - [ ] Manual `make run-cli` when daemon available
 
 ---
