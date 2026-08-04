@@ -29,9 +29,8 @@ var (
 			Padding(0, 1)
 
 	StatusBarStyle = lipgloss.NewStyle().
-			Background(DarkBg).
-			Foreground(lipgloss.Color("252")).
-			Padding(0, 1)
+		Background(DarkBg).
+		Foreground(lipgloss.Color("252"))
 
 	CommandPromptStyle = lipgloss.NewStyle().
 				Foreground(Yellow).

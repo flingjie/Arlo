@@ -397,15 +397,15 @@ func (m *Model) renderCommandBar(width int) string {
 	msg := m.cmdMsg
 	if msg != "" {
 		m.cmdMsg = ""
+		return StatusBarStyle.Width(width).Render(WhiteStyle.Render(msg))
 	}
 
-	left := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :f[ilter] :rf[resh] :h[elp] :q[uit]")
-	right := ""
-	if msg != "" {
-		right = WhiteStyle.Render(msg)
+	cmdText := ":a[ttach] :ap[rove] :rj[ect] :f[ilter] :rf[resh] :h[elp] :q[uit]"
+	// Truncate if the text is wider than the available space.
+	if width > 4 && len(cmdText) > width-2 {
+		cmdText = cmdText[:width-4] + ".."
 	}
-
-	return StatusBarStyle.Width(width).Render(left + "  " + right)
+	return StatusBarStyle.Width(width).Render(GrayStyle.Render(cmdText))
 }
 
 func (m *Model) renderFilterOverlay() string {
