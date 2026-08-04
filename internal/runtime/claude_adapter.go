@@ -134,8 +134,15 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 			stdoutBuf.WriteByte('\n')
 
 			if event, ok := ParseStreamJSON(line); ok {
-				cum.tokensIn += event.TokensIn
-				cum.tokensOut += event.TokensOut
+				// result.modelUsage is the authoritative session total; replace
+				// rather than sum so we don't double-count with assistant usage.
+				if event.Type == "result" && (event.TokensIn > 0 || event.TokensOut > 0) {
+					cum.tokensIn = event.TokensIn
+					cum.tokensOut = event.TokensOut
+				} else {
+					cum.tokensIn += event.TokensIn
+					cum.tokensOut += event.TokensOut
+				}
 				if event.ToolName != "" {
 					cum.toolCalls++
 				}

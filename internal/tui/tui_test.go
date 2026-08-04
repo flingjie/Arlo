@@ -316,7 +316,7 @@ func TestInspectorPanelSummarySections(t *testing.T) {
 	p.SetNode(n)
 	view := p.View(60, 20)
 
-	for _, section := range []string{"Configuration", "Session", "Commands"} {
+	for _, section := range []string{"Configuration", "Session"} {
 		if !strings.Contains(view, section) {
 			t.Errorf("missing section %q", section)
 		}
@@ -329,9 +329,6 @@ func TestInspectorPanelSummarySections(t *testing.T) {
 	}
 	if !strings.Contains(view, "human_approval") {
 		t.Error("missing gate")
-	}
-	if !strings.Contains(view, ":retry") {
-		t.Error("missing :retry in commands hint")
 	}
 }
 
@@ -468,7 +465,7 @@ func TestInspectorPanelLogsTabEmpty(t *testing.T) {
 func TestInspectorPanelLogsTabWithEvents(t *testing.T) {
 	d := NewDispatcher()
 	p := NewInspectorPanel(d)
-	n := &arlov1.NodeState{NodeId: "n1", Status: "RUNNING"}
+	n := &arlov1.NodeState{NodeId: "n1", Status: "RUNNING", SessionId: "s1"}
 	p.SetNode(n)
 
 	now := time.Now()
@@ -476,12 +473,15 @@ func TestInspectorPanelLogsTabWithEvents(t *testing.T) {
 	_, _ = p.Update(EventAppendedEvent{Item: NodeStartedItem{Timestamp: now, NodeID: "n1", SessionID: "s1"}})
 
 	p.SetTab(TabLogs)
-	view := p.View(80, 20)
-	if !strings.Contains(view, "n1 created") {
-		t.Error("should show node created event")
+	view := stripAnsi(p.View(80, 24))
+	if !strings.Contains(view, "created  skill=root-cause") {
+		t.Error("should show diagnostic created line")
 	}
-	if !strings.Contains(view, "n1 started") {
-		t.Error("should show node started event")
+	if !strings.Contains(view, "started  session=s1") {
+		t.Error("should show diagnostic started line")
+	}
+	if !strings.Contains(view, "session") || !strings.Contains(view, "s1") {
+		t.Error("context header should show session")
 	}
 }
 
@@ -493,20 +493,90 @@ func TestInspectorPanelLogsTabChronological(t *testing.T) {
 
 	now := time.Now()
 	// Insert oldest first so the buffer is time-ordered.
-	// renderLogs iterates in reverse (newest first).
+	// renderLogs iterates oldest → newest (causal order for debugging).
 	_, _ = p.Update(EventAppendedEvent{Item: NodeCreatedItem{Timestamp: now, NodeID: "n1", Skill: "s"}})
 	_, _ = p.Update(EventAppendedEvent{Item: NodeStartedItem{Timestamp: now.Add(1 * time.Second), NodeID: "n1"}})
 
 	p.SetTab(TabLogs)
-	view := p.View(80, 20)
-	// Most recent (started) appears first in the rendered output.
-	startedIdx := strings.Index(stripAnsi(view), "started")
-	createdIdx := strings.Index(stripAnsi(view), "created")
+	view := stripAnsi(p.View(80, 20))
+	createdIdx := strings.Index(view, "created")
+	startedIdx := strings.Index(view, "started")
 	if startedIdx == -1 || createdIdx == -1 {
-		t.Skip("event render strings changed")
+		t.Fatalf("missing events in view: %q", view)
 	}
-	if startedIdx > createdIdx {
-		t.Error("events should be in reverse chronological order (newest first)")
+	if createdIdx > startedIdx {
+		t.Error("events should be in causal order (oldest first)")
+	}
+}
+
+func TestFormatLogLine(t *testing.T) {
+	tests := []struct {
+		name string
+		item TimelineItem
+		want string
+	}{
+		{"created", NodeCreatedItem{NodeID: "n", Skill: "root-cause"}, "created  skill=root-cause"},
+		{"started", NodeStartedItem{NodeID: "n", SessionID: "sess-1"}, "started  session=sess-1"},
+		{"failed", NodeFailedItem{NodeID: "n", Reason: "exit code -1 (killed by signal)"}, "FAILED   exit code -1 (killed by signal)"},
+		{"metrics", MetricsSnapshotItem{TokensIn: 10, TokensOut: 5, ToolCalls: 2, DurationMs: 1500}, "metrics  10↑/5↓ tokens · 2 tools · 1.5s"},
+		{"annotated", NodeAnnotatedItem{Key: "runtime.launch", Value: "id=rt-n-1"}, "runtime.launch = id=rt-n-1"},
+		{"completed", NodeCompletedItem{NodeID: "n"}, "completed ✓"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatLogLine(tt.item)
+			if got != tt.want {
+				t.Errorf("formatLogLine() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInspectorPanelLogsHidesHeartbeats(t *testing.T) {
+	d := NewDispatcher()
+	p := NewInspectorPanel(d)
+	n := &arlov1.NodeState{NodeId: "n1", Status: "RUNNING"}
+	p.SetNode(n)
+
+	now := time.Now()
+	_, _ = p.Update(EventAppendedEvent{Item: NodeStartedItem{Timestamp: now, NodeID: "n1", SessionID: "s1"}})
+	_, _ = p.Update(EventAppendedEvent{Item: NodeHeartbeatItem{Timestamp: now, NodeID: "n1"}})
+	_, _ = p.Update(EventAppendedEvent{Item: NodeHeartbeatItem{Timestamp: now, NodeID: "n1"}})
+
+	p.SetTab(TabLogs)
+	view := stripAnsi(p.View(80, 20))
+	if strings.Contains(view, "heartbeat\n") || strings.Count(view, "heartbeat") > 1 {
+		// footer may mention "heartbeat(s) hidden"
+	}
+	if !strings.Contains(view, "2 heartbeat") {
+		t.Errorf("expected heartbeat hidden footer, got: %s", view)
+	}
+	if strings.Contains(view, "DEBUG") {
+		t.Error("heartbeat DEBUG lines should be hidden from Logs tab")
+	}
+}
+
+func TestInspectorPanelLogsShowsLastError(t *testing.T) {
+	d := NewDispatcher()
+	p := NewInspectorPanel(d)
+	n := &arlov1.NodeState{NodeId: "analyze", Status: "FAILED", RetryCount: 1}
+	p.SetNode(n)
+
+	now := time.Now()
+	_, _ = p.Update(EventAppendedEvent{Item: NodeFailedItem{
+		Timestamp: now, NodeID: "analyze", Reason: "exit code -1 (killed by signal)",
+	}})
+
+	p.SetTab(TabLogs)
+	view := stripAnsi(p.View(80, 20))
+	if !strings.Contains(view, "last err") {
+		t.Error("context should show last err label")
+	}
+	if !strings.Contains(view, "killed by signal") {
+		t.Error("context should surface failure reason")
+	}
+	if !strings.Contains(view, "retry=1") {
+		t.Error("context should show retry count")
 	}
 }
 

@@ -247,30 +247,33 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		if gn, ok := nodeMap[ns.NodeID]; ok {
 			maxRetries = gn.Retry.MaxRetries
 		}
-		if ns.RetryCount < maxRetries {
-			if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
-				domain.NodeFailed{
-					NodeID:     ns.NodeID,
-					WorkflowID: workflowID,
-					SessionID:  ns.SessionID,
-					Reason:     fmt.Sprintf("exit code %d", inst.ExitCode),
-					Retryable:  true,
-				}); err != nil {
-				slog.Error("reap: emit NODE_FAILED failed", "node", ns.NodeID, "error", err)
-			}
-		} else {
-			if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
-				domain.NodeFailed{
-					NodeID:     ns.NodeID,
-					WorkflowID: workflowID,
-					SessionID:  ns.SessionID,
-					Reason:     fmt.Sprintf("exit code %d (retries exhausted)", inst.ExitCode),
-					Retryable:  false,
-				}); err != nil {
-				slog.Error("reap: emit NODE_FAILED failed", "node", ns.NodeID, "error", err)
-			}
+		retryable := ns.RetryCount < maxRetries
+		reason := formatExitReason(inst.ExitCode, !retryable)
+		if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+			domain.NodeFailed{
+				NodeID:     ns.NodeID,
+				WorkflowID: workflowID,
+				SessionID:  ns.SessionID,
+				Reason:     reason,
+				Retryable:  retryable,
+			}); err != nil {
+			slog.Error("reap: emit NODE_FAILED failed", "node", ns.NodeID, "error", err)
 		}
 	}
+}
+
+// formatExitReason builds a human-readable failure reason for a non-zero exit.
+// Exit code -1 means the process was terminated by a signal (e.g. parent ctx
+// cancellation killing a CommandContext child).
+func formatExitReason(exitCode int, exhausted bool) string {
+	base := fmt.Sprintf("exit code %d", exitCode)
+	if exitCode < 0 {
+		base = fmt.Sprintf("exit code %d (killed by signal)", exitCode)
+	}
+	if exhausted {
+		return base + " (retries exhausted)"
+	}
+	return base
 }
 
 // mkSessionID builds a session identifier for a node attempt.
@@ -326,16 +329,18 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 		}
 
 		sessionID := mkSessionID(nodeID, retryCount+1)
+		instanceID := mkInstanceID(nodeID, retryCount+1)
+		wd := workDir()
 		_, err := r.runtimeMgr.StartInstance(ctx, runtime.RuntimeSpec{
-			InstanceID: mkInstanceID(nodeID, retryCount+1),
+			InstanceID: instanceID,
 			Type:       n.Runtime.Provider,
 			Config: domain.RuntimeConfig{
 				Model:          n.Runtime.Model,
 				PermissionMode: "auto",
 			},
 			SessionID: sessionID,
-			WorkDir:    workDir(),
-			Prompt:     prompt,
+			WorkDir:   wd,
+			Prompt:    prompt,
 		})
 		if err != nil {
 			// Fetch current node state to get the SessionID set by NODE_STARTED.
@@ -366,6 +371,27 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 			}
 			slog.Warn("failed to launch runtime",
 				"node", nodeID, "error", err, "retryable", retryable)
+			return
+		}
+
+		// Diagnostic breadcrumb for the Inspector Logs tab.
+		if ns, nsErr := r.stateStore.GetNodeState(ctx, nodeID); nsErr == nil {
+			provider := string(n.Runtime.Provider)
+			if provider == "" {
+				provider = "unknown"
+			}
+			val := fmt.Sprintf("id=%s provider=%s workdir=%s attempt=%d session=%s",
+				instanceID, provider, wd, retryCount+1, sessionID)
+			if emitErr := r.emitNodeEvent(ctx, workflowID, *ns, store.EventNodeAnnotated,
+				domain.NodeAnnotated{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					Key:        "runtime.launch",
+					Value:      val,
+				}); emitErr != nil {
+				slog.Warn("launchRuntime: emit runtime.launch annotation failed",
+					"node", nodeID, "error", emitErr)
+			}
 		}
 		return
 	}

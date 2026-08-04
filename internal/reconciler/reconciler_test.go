@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1013,5 +1014,68 @@ nodes:
 	ns, _ = ss.GetNodeState(ctx, "step1")
 	if ns.Status != domain.NodeStatusFailed {
 		t.Fatalf("attempt 3: expected FAILED (retries exhausted), got %s", ns.Status)
+	}
+}
+
+func TestFormatExitReason(t *testing.T) {
+	tests := []struct {
+		code      int
+		exhausted bool
+		want      string
+	}{
+		{1, false, "exit code 1"},
+		{1, true, "exit code 1 (retries exhausted)"},
+		{-1, false, "exit code -1 (killed by signal)"},
+		{-1, true, "exit code -1 (killed by signal) (retries exhausted)"},
+	}
+	for _, tt := range tests {
+		got := formatExitReason(tt.code, tt.exhausted)
+		if got != tt.want {
+			t.Errorf("formatExitReason(%d, %v) = %q, want %q", tt.code, tt.exhausted, got, tt.want)
+		}
+	}
+}
+
+// TestLaunchRuntimeSuccessEmitsAnnotation verifies a successful StartInstance
+// emits a runtime.launch NODE_ANNOTATED breadcrumb for Inspector Logs.
+func TestLaunchRuntimeSuccessEmitsAnnotation(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	mgr := runtime.NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &failingAdapter{startErr: nil})
+	r.runtimeMgr = mgr
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+	r.Reconcile(ctx, wfID)
+
+	events, err := es.Read(ctx, "node-analyze", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	var found bool
+	for _, e := range events {
+		if e.Type != store.EventNodeAnnotated {
+			continue
+		}
+		var payload domain.NodeAnnotated
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if payload.Key == "runtime.launch" {
+			found = true
+			if !strings.Contains(payload.Value, "id=rt-analyze-1") {
+				t.Errorf("annotation missing instance id: %s", payload.Value)
+			}
+			if !strings.Contains(payload.Value, "attempt=1") {
+				t.Errorf("annotation missing attempt: %s", payload.Value)
+			}
+			if !strings.Contains(payload.Value, "session=sess-analyze-1") {
+				t.Errorf("annotation missing session: %s", payload.Value)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected runtime.launch NODE_ANNOTATED after successful launch")
 	}
 }

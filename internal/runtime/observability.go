@@ -33,10 +33,12 @@ type StreamEvent struct {
 // a StreamEvent. Returns false if the line could not be parsed.
 func ParseStreamJSON(line []byte) (StreamEvent, bool) {
 	var raw struct {
-		Type    string          `json:"type"`
-		Subtype string          `json:"subtype"`
-		Message json.RawMessage `json:"message"`
-		Result  string          `json:"result,omitempty"`
+		Type       string          `json:"type"`
+		Subtype    string          `json:"subtype"`
+		Message    json.RawMessage `json:"message"`
+		Result     string          `json:"result,omitempty"`
+		Usage      json.RawMessage `json:"usage,omitempty"`
+		ModelUsage json.RawMessage `json:"modelUsage,omitempty"`
 	}
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return StreamEvent{}, false
@@ -55,9 +57,47 @@ func ParseStreamJSON(line []byte) (StreamEvent, bool) {
 		event.parseUser(raw.Message)
 	case "result":
 		event.Text = raw.Result
+		event.parseResultUsage(raw.Usage, raw.ModelUsage)
 	}
 
 	return event, true
+}
+
+// parseResultUsage extracts token totals from a Claude stream-json "result" event.
+// Prefer modelUsage (camelCase per-model totals) when present and non-zero;
+// otherwise fall back to usage.input_tokens / usage.output_tokens.
+func (e *StreamEvent) parseResultUsage(usageRaw, modelUsageRaw json.RawMessage) {
+	if len(modelUsageRaw) > 0 {
+		var models map[string]struct {
+			InputTokens  int64 `json:"inputTokens"`
+			OutputTokens int64 `json:"outputTokens"`
+		}
+		if err := json.Unmarshal(modelUsageRaw, &models); err == nil {
+			var in, out int64
+			for _, m := range models {
+				in += m.InputTokens
+				out += m.OutputTokens
+			}
+			if in > 0 || out > 0 {
+				e.TokensIn = in
+				e.TokensOut = out
+				return
+			}
+		}
+	}
+
+	if len(usageRaw) == 0 {
+		return
+	}
+	var usage struct {
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+	}
+	if err := json.Unmarshal(usageRaw, &usage); err != nil {
+		return
+	}
+	e.TokensIn = usage.InputTokens
+	e.TokensOut = usage.OutputTokens
 }
 
 func (e *StreamEvent) parseAssistant(raw json.RawMessage) {

@@ -109,8 +109,10 @@ func (s *ArloService) CreateTask(ctx context.Context, req *arlov1.CreateTaskRequ
 	}
 
 	// Register graph with the Reconciler and reconcile immediately.
+	// Detach from the gRPC request context so a returning RPC cannot cancel
+	// in-flight runtime launches started during this reconcile.
 	s.reconciler.Submit(wfID, graph)
-	if err := s.reconciler.Reconcile(ctx, wfID); err != nil {
+	if err := s.reconciler.Reconcile(context.WithoutCancel(ctx), wfID); err != nil {
 		slog.Warn("initial reconcile failed", "workflow", wfID, "error", err)
 	}
 
@@ -438,7 +440,7 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 		}
 		s.stateStore.Rebuild(ctx)
 		if wfID := ns.WorkflowID; wfID != "" {
-			s.reconciler.Reconcile(ctx, wfID)
+			s.reconciler.Reconcile(context.WithoutCancel(ctx), wfID)
 		}
 		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("node %s retrying", nodeID)}, nil
 

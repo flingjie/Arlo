@@ -197,39 +197,139 @@ func (p *InspectorPanel) renderSummary(sb *strings.Builder, width int) {
 	sectionHeader(sb, "Session", width)
 	kvLine(sb, "session", emptyDash(n.SessionId, ""), WhiteStyle)
 	kvLine(sb, "runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
-
-	sb.WriteString("\n")
-	sectionHeader(sb, "Commands", width)
-	sb.WriteString("  ")
-	cmds := []string{":attach", ":approve", ":reject", ":retry", ":logs"}
-	styled := make([]string, len(cmds))
-	for i, c := range cmds {
-		styled[i] = CyanStyle.Render(c)
-	}
-	sb.WriteString(strings.Join(styled, "  "))
-	sb.WriteString("\n")
 }
 
 // ── Logs Tab ──────────────────────────────────────
 
 func (p *InspectorPanel) renderLogs(sb *strings.Builder) {
-	events := p.nodeEvents[p.node.NodeId]
+	n := p.node
+	events := p.nodeEvents[n.NodeId]
+
+	// Context header — always visible so operators can diagnose without
+	// scrolling through the event stream.
+	p.renderLogsContext(sb, n, events)
+
 	if len(events) == 0 {
 		sb.WriteString(GrayStyle.Render("  No log entries yet — events will appear as the node runs.\n"))
 		return
 	}
 
-	// Show most recent first (reversed chronological).
-	for i := len(events) - 1; i >= 0; i-- {
-		item := events[i]
-		timeStr := item.Time().Local().Format("15:04:05")
+	// Causal order (oldest → newest). Skip heartbeats — they drown signal.
+	var shown, skippedHB int
+	for _, item := range events {
+		if _, ok := item.(NodeHeartbeatItem); ok {
+			skippedHB++
+			continue
+		}
+		timeStr := item.Time().Local().Format("15:04:05.000")
 		levelColor := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Level().Color()))
 		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
 			GrayStyle.Render(timeStr),
-			levelColor.Render(item.Level().String()),
-			item.Render(),
+			levelColor.Render(fmt.Sprintf("%-5s", item.Level().String())),
+			formatLogLine(item),
 		))
+		shown++
 	}
+
+	if shown == 0 {
+		sb.WriteString(GrayStyle.Render("  No diagnostic events yet (heartbeats hidden).\n"))
+	} else if skippedHB > 0 {
+		sb.WriteString(GrayStyle.Render(fmt.Sprintf("  · %d heartbeat(s) hidden\n", skippedHB)))
+	}
+}
+
+func (p *InspectorPanel) renderLogsContext(sb *strings.Builder, n *arlov1.NodeState, events []TimelineItem) {
+	statusStyle := statusTextStyle(n.Status, false)
+	sb.WriteString("  ")
+	sb.WriteString(WhiteStyle.Bold(true).Render(n.NodeId))
+	sb.WriteString("  ")
+	sb.WriteString(statusStyle.Render(n.Status))
+	if n.RetryCount > 0 {
+		sb.WriteString("  ")
+		sb.WriteString(YellowStyle.Render(fmt.Sprintf("retry=%d", n.RetryCount)))
+	}
+	sb.WriteString("\n")
+
+	if n.SessionId != "" {
+		kvLine(sb, "session", n.SessionId, WhiteStyle)
+	}
+	if n.RuntimeId != "" {
+		kvLine(sb, "runtime", n.RuntimeId, WhiteStyle)
+	}
+
+	// Surface last failure reason and last metrics from the event buffer.
+	if reason := lastFailureReason(events); reason != "" {
+		kvLine(sb, "last err", reason, RedStyle)
+	}
+	if m, ok := lastMetrics(events); ok {
+		kvLine(sb, "metrics", fmt.Sprintf("%d↑/%d↓ tokens · %d tools · %s",
+			m.TokensIn, m.TokensOut, m.ToolCalls, formatDur(m.DurationMs)), WhiteStyle)
+	}
+
+	sb.WriteString(GrayStyle.Render("  ── events ──") + "\n")
+}
+
+// formatLogLine renders a compact, node-scoped diagnostic line for the Logs
+// tab. Unlike TimelineItem.Render(), it omits the redundant node ID prefix
+// and surfaces fields useful for troubleshooting.
+func formatLogLine(item TimelineItem) string {
+	switch it := item.(type) {
+	case NodeCreatedItem:
+		if it.Skill != "" {
+			return fmt.Sprintf("created  skill=%s", it.Skill)
+		}
+		return "created"
+	case NodeStartedItem:
+		if it.SessionID != "" {
+			return fmt.Sprintf("started  session=%s", it.SessionID)
+		}
+		return "started"
+	case NodeCompletedItem:
+		return "completed ✓"
+	case NodeFailedItem:
+		if it.Reason != "" {
+			return fmt.Sprintf("FAILED   %s", it.Reason)
+		}
+		return "FAILED"
+	case NodeWaitingItem:
+		if it.Reason != "" {
+			return fmt.Sprintf("waiting  %s", it.Reason)
+		}
+		return "waiting"
+	case NodeAnnotatedItem:
+		return fmt.Sprintf("%s = %s", it.Key, it.Value)
+	case MetricsSnapshotItem:
+		return fmt.Sprintf("metrics  %d↑/%d↓ tokens · %d tools · %s",
+			it.TokensIn, it.TokensOut, it.ToolCalls, formatDur(it.DurationMs))
+	case ArtifactCreatedItem:
+		name := it.Name
+		if name == "" {
+			name = truncateID(it.ArtifactID)
+		}
+		return fmt.Sprintf("artifact %s", name)
+	case NodeHeartbeatItem:
+		return "heartbeat"
+	default:
+		return item.Render()
+	}
+}
+
+func lastFailureReason(events []TimelineItem) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if f, ok := events[i].(NodeFailedItem); ok && f.Reason != "" {
+			return f.Reason
+		}
+	}
+	return ""
+}
+
+func lastMetrics(events []TimelineItem) (MetricsSnapshotItem, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if m, ok := events[i].(MetricsSnapshotItem); ok {
+			return m, true
+		}
+	}
+	return MetricsSnapshotItem{}, false
 }
 
 // ── Metrics Tab ──────────────────────────────────
