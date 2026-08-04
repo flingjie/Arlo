@@ -93,7 +93,11 @@ func (p *WorkflowPanel) View(width int) string {
 	completed, total := p.countStatus()
 	sb.WriteString(HeaderStyle.Render(fmt.Sprintf("WORKFLOW  %d/%d", completed, total)))
 	sb.WriteString("\n")
-	sb.WriteString(ProgressBar(completed, total, width-2))
+	barWidth := width - 4
+	if barWidth < 0 {
+		barWidth = 0
+	}
+	sb.WriteString(ProgressBar(completed, total, barWidth))
 	sb.WriteString("\n\n")
 
 	if len(p.nodes) == 0 {
