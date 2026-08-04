@@ -271,6 +271,13 @@ func (s *ArloService) SubscribeEvents(req *arlov1.SubscribeEventsRequest, stream
 			if req.WorkflowId != "" && event.StreamID != "workflow-"+req.WorkflowId && !strings.HasPrefix(event.StreamID, "node-") {
 				continue // filter by workflow
 			}
+			// For node-* streams, also filter by workflow_id in the payload
+			// to prevent events from other workflows with the same node name.
+			if strings.HasPrefix(event.StreamID, "node-") {
+				if !nodeEventMatchesWorkflow(event, req.WorkflowId) {
+					continue
+				}
+			}
 			if err := stream.Send(&arlov1.Event{
 				EventId:   event.ID,
 				StreamId:  event.StreamID,
@@ -436,6 +443,17 @@ func buildNodeState(ns *domain.NodeState) *arlov1.NodeState {
 		p.CompletedAt = ns.CompletedAt.Format(time.RFC3339)
 	}
 	return p
+}
+
+// nodeEventMatchesWorkflow checks if a node event belongs to the given workflow.
+func nodeEventMatchesWorkflow(event store.Event, wfID string) bool {
+	var payload struct {
+		WorkflowID string `json:"workflow_id"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return false
+	}
+	return payload.WorkflowID == wfID
 }
 
 func marshalJSON(v interface{}) []byte {
