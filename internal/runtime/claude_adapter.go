@@ -60,7 +60,8 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 	}
 
 	cmd := exec.CommandContext(ctx, "claude",
-		"--print",                    // non-interactive output
+		"--print",             // non-interactive output
+		"--verbose",           // required for stream-json with --print
 		"--output-format", "stream-json",
 	)
 

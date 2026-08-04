@@ -184,6 +184,7 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 		switch ns.Status {
 		case domain.NodeStatusFailed:
 			anyFailed = true
+			allDone = false // a failed node means the workflow is not successfully done
 		case domain.NodeStatusCompleted:
 			// done
 		default:
