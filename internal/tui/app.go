@@ -34,6 +34,9 @@ type Model struct {
 	err      error
 	cmdBuf   string
 	cmdMsg   string
+
+	// Dedup: track event IDs we've already seen.
+	seenEvents map[string]bool
 }
 
 // New creates a new TUI model.
@@ -54,6 +57,7 @@ func New(socket, workflow string) *Model {
 		workflowPanel:  NewWorkflowPanel(d),
 		timelinePanel:  NewTimelinePanel(d),
 		inspectorPanel: NewInspectorPanel(),
+		seenEvents:     make(map[string]bool),
 	}
 }
 
@@ -245,8 +249,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case eventMsg:
 		if msg.event != nil {
-			item := EventToItem(msg.event)
-			m.dispatcher.Emit(EventAppendedEvent{Item: item})
+			// Dedup by event ID — prevents duplicates from reconnect or replay.
+			if !m.seenEvents[msg.event.EventId] {
+				m.seenEvents[msg.event.EventId] = true
+				item := EventToItem(msg.event)
+				m.dispatcher.Emit(EventAppendedEvent{Item: item})
+			}
+			// Prune seenEvents map if it grows large (keep last 1000).
+			if len(m.seenEvents) > 2000 {
+				m.seenEvents = make(map[string]bool)
+			}
 		}
 		cmds = append(cmds, m.client.RecvEvent())
 
