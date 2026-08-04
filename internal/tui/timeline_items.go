@@ -56,19 +56,78 @@ type TimelineItem interface {
 	Render() string
 }
 
-// NodeStartedItem represents a NODE_STARTED event.
+// ── Task / Workflow items ──────────────────────────
+
+type TaskCreatedItem struct {
+	Timestamp time.Time
+	Title     string
+}
+
+func (i TaskCreatedItem) Time() time.Time { return i.Timestamp }
+func (i TaskCreatedItem) Level() Level    { return INFO }
+func (i TaskCreatedItem) Render() string  { return fmt.Sprintf("task created: %s", i.Title) }
+
+type WorkflowCreatedItem struct {
+	Timestamp time.Time
+	Name      string
+	Version   int
+}
+
+func (i WorkflowCreatedItem) Time() time.Time { return i.Timestamp }
+func (i WorkflowCreatedItem) Level() Level    { return INFO }
+func (i WorkflowCreatedItem) Render() string {
+	return fmt.Sprintf("workflow created: %s (v%d)", i.Name, i.Version)
+}
+
+type TaskCompletedItem struct {
+	Timestamp time.Time
+}
+
+func (i TaskCompletedItem) Time() time.Time { return i.Timestamp }
+func (i TaskCompletedItem) Level() Level    { return INFO }
+func (i TaskCompletedItem) Render() string  { return "workflow completed" }
+
+type TaskFailedItem struct {
+	Timestamp time.Time
+	Reason    string
+}
+
+func (i TaskFailedItem) Time() time.Time { return i.Timestamp }
+func (i TaskFailedItem) Level() Level    { return ERROR }
+func (i TaskFailedItem) Render() string  { return fmt.Sprintf("workflow failed: %s", i.Reason) }
+
+// ── Node items ─────────────────────────────────────
+
+type NodeCreatedItem struct {
+	Timestamp time.Time
+	NodeID    string
+	Skill     string
+}
+
+func (i NodeCreatedItem) Time() time.Time { return i.Timestamp }
+func (i NodeCreatedItem) Level() Level    { return INFO }
+func (i NodeCreatedItem) Render() string {
+	if i.Skill != "" {
+		return fmt.Sprintf("%s created (skill: %s)", i.NodeID, i.Skill)
+	}
+	return fmt.Sprintf("%s created", i.NodeID)
+}
+
 type NodeStartedItem struct {
 	Timestamp time.Time
 	NodeID    string
+	SessionID string
 }
 
 func (i NodeStartedItem) Time() time.Time { return i.Timestamp }
 func (i NodeStartedItem) Level() Level    { return INFO }
 func (i NodeStartedItem) Render() string {
+	if i.SessionID != "" {
+		return fmt.Sprintf("%s started [%s]", i.NodeID, i.SessionID)
+	}
 	return fmt.Sprintf("%s started", i.NodeID)
 }
 
-// NodeCompletedItem represents a NODE_COMPLETED event.
 type NodeCompletedItem struct {
 	Timestamp time.Time
 	NodeID    string
@@ -77,10 +136,9 @@ type NodeCompletedItem struct {
 func (i NodeCompletedItem) Time() time.Time { return i.Timestamp }
 func (i NodeCompletedItem) Level() Level    { return INFO }
 func (i NodeCompletedItem) Render() string {
-	return fmt.Sprintf("%s completed", i.NodeID)
+	return fmt.Sprintf("%s completed ✓", i.NodeID)
 }
 
-// NodeFailedItem represents a NODE_FAILED event.
 type NodeFailedItem struct {
 	Timestamp time.Time
 	NodeID    string
@@ -93,7 +151,6 @@ func (i NodeFailedItem) Render() string {
 	return fmt.Sprintf("%s failed: %s", i.NodeID, i.Reason)
 }
 
-// NodeWaitingItem represents a NODE_WAITING event.
 type NodeWaitingItem struct {
 	Timestamp time.Time
 	NodeID    string
@@ -103,10 +160,12 @@ type NodeWaitingItem struct {
 func (i NodeWaitingItem) Time() time.Time { return i.Timestamp }
 func (i NodeWaitingItem) Level() Level    { return WARN }
 func (i NodeWaitingItem) Render() string {
-	return fmt.Sprintf("%s waiting: %s", i.NodeID, i.Reason)
+	if i.Reason != "" {
+		return fmt.Sprintf("%s waiting: %s", i.NodeID, i.Reason)
+	}
+	return fmt.Sprintf("%s waiting", i.NodeID)
 }
 
-// NodeAnnotatedItem represents a NODE_ANNOTATED event.
 type NodeAnnotatedItem struct {
 	Timestamp time.Time
 	NodeID    string
@@ -117,10 +176,9 @@ type NodeAnnotatedItem struct {
 func (i NodeAnnotatedItem) Time() time.Time { return i.Timestamp }
 func (i NodeAnnotatedItem) Level() Level    { return INFO }
 func (i NodeAnnotatedItem) Render() string {
-	return fmt.Sprintf("%s annotated: %s=%s", i.NodeID, i.Key, i.Value)
+	return fmt.Sprintf("%s annotated: %s = %s", i.NodeID, i.Key, i.Value)
 }
 
-// NodeHeartbeatItem represents a NODE_HEARTBEAT event.
 type NodeHeartbeatItem struct {
 	Timestamp time.Time
 	NodeID    string
@@ -128,26 +186,26 @@ type NodeHeartbeatItem struct {
 
 func (i NodeHeartbeatItem) Time() time.Time { return i.Timestamp }
 func (i NodeHeartbeatItem) Level() Level    { return DEBUG }
-func (i NodeHeartbeatItem) Render() string {
-	return fmt.Sprintf("%s heartbeat", i.NodeID)
-}
+func (i NodeHeartbeatItem) Render() string  { return fmt.Sprintf("%s heartbeat", i.NodeID) }
 
-// MetricsSnapshotItem represents a METRICS_SNAPSHOT event.
 type MetricsSnapshotItem struct {
 	Timestamp time.Time
 	NodeID    string
 	TokensIn  int64
 	TokensOut int64
-	CostUSD   float64
+	ToolCalls int
+	DurationMs int64
 }
 
 func (i MetricsSnapshotItem) Time() time.Time { return i.Timestamp }
 func (i MetricsSnapshotItem) Level() Level    { return INFO }
 func (i MetricsSnapshotItem) Render() string {
-	return fmt.Sprintf("%s metrics: %d↑/%d↓ tokens, $%.4f", i.NodeID, i.TokensIn, i.TokensOut, i.CostUSD)
+	return fmt.Sprintf("%s: %d↑/%d↓ tokens, %d tools, %s",
+		i.NodeID, i.TokensIn, i.TokensOut, i.ToolCalls, formatDur(i.DurationMs))
 }
 
-// GenericEventItem wraps a gRPC event into a timeline item.
+// ── Generic fallback ──────────────────────────────
+
 type GenericEventItem struct {
 	Timestamp time.Time
 	EventType string
@@ -166,44 +224,53 @@ func (i GenericEventItem) Level() Level {
 		return INFO
 	}
 }
-func (i GenericEventItem) Render() string {
-	return i.EventType
-}
+func (i GenericEventItem) Render() string { return i.EventType }
 
-// EventToItem converts a gRPC event to a more specific TimelineItem when possible.
+// ── EventToItem ───────────────────────────────────
+
 func EventToItem(event *arlov1.Event) TimelineItem {
 	t, err := time.Parse(time.RFC3339, event.Timestamp)
 	if err != nil {
 		t = time.Now()
 	}
 
-	// Extract node ID from stream or payload.
 	nodeID := extractNodeID(event)
 
 	switch event.Type {
+	case "TASK_CREATED":
+		return TaskCreatedItem{Timestamp: t, Title: extractString(event, "title")}
+	case "WORKFLOW_CREATED":
+		name, ver := extractWorkflowCreated(event)
+		return WorkflowCreatedItem{Timestamp: t, Name: name, Version: ver}
+	case "TASK_COMPLETED":
+		return TaskCompletedItem{Timestamp: t}
+	case "TASK_FAILED":
+		return TaskFailedItem{Timestamp: t, Reason: extractString(event, "reason")}
+	case "NODE_CREATED":
+		return NodeCreatedItem{Timestamp: t, NodeID: nodeID, Skill: extractString(event, "skill_name")}
 	case "NODE_STARTED":
-		return NodeStartedItem{Timestamp: t, NodeID: nodeID}
+		return NodeStartedItem{Timestamp: t, NodeID: nodeID, SessionID: extractString(event, "session_id")}
 	case "NODE_COMPLETED":
 		return NodeCompletedItem{Timestamp: t, NodeID: nodeID}
 	case "NODE_FAILED":
-		return NodeFailedItem{Timestamp: t, NodeID: nodeID}
+		return NodeFailedItem{Timestamp: t, NodeID: nodeID, Reason: extractString(event, "reason")}
 	case "NODE_WAITING":
-		return NodeWaitingItem{Timestamp: t, NodeID: nodeID}
+		return NodeWaitingItem{Timestamp: t, NodeID: nodeID, Reason: extractString(event, "reason")}
 	case "NODE_ANNOTATED":
 		key, val := extractAnnotation(event)
 		return NodeAnnotatedItem{Timestamp: t, NodeID: nodeID, Key: key, Value: val}
 	case "NODE_HEARTBEAT":
 		return NodeHeartbeatItem{Timestamp: t, NodeID: nodeID}
 	case "METRICS_SNAPSHOT":
-		tokensIn, tokensOut, cost := extractMetrics(event)
-		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: tokensIn, TokensOut: tokensOut, CostUSD: cost}
+		ti, to, tc, dur := extractMetrics(event)
+		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: ti, TokensOut: to, ToolCalls: tc, DurationMs: dur}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
 }
 
-// extractNodeID extracts the node ID from the event's StreamId.
-// StreamId format: "node-{nodeID}".
+// ── Extractors ─────────────────────────────────────
+
 func extractNodeID(event *arlov1.Event) string {
 	sid := event.StreamId
 	if len(sid) > 5 && sid[:5] == "node-" {
@@ -212,10 +279,29 @@ func extractNodeID(event *arlov1.Event) string {
 	return ""
 }
 
-// extractAnnotation extracts key/value from a NODE_ANNOTATED event payload.
+func extractString(event *arlov1.Event, key string) string {
+	var payload map[string]any
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return ""
+	}
+	if v, ok := payload[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func extractWorkflowCreated(event *arlov1.Event) (string, int) {
+	var payload struct {
+		GraphName string `json:"graph_name"`
+		Version   int    `json:"version"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	return payload.GraphName, payload.Version
+}
+
 func extractAnnotation(event *arlov1.Event) (string, string) {
-	// Payload is JSON with "key" and "value" fields.
-	// Use a simple JSON decode.
 	var payload struct {
 		Key   string `json:"key"`
 		Value string `json:"value"`
@@ -224,13 +310,25 @@ func extractAnnotation(event *arlov1.Event) (string, string) {
 	return payload.Key, payload.Value
 }
 
-// extractMetrics extracts token/cost info from a METRICS_SNAPSHOT event payload.
-func extractMetrics(event *arlov1.Event) (int64, int64, float64) {
+func extractMetrics(event *arlov1.Event) (tokensIn, tokensOut int64, toolCalls int, durationMs int64) {
 	var payload struct {
-		TokensIn  int64   `json:"tokens_in"`
-		TokensOut int64   `json:"tokens_out"`
-		CostUSD   float64 `json:"cost_usd"`
+		TokensIn   int64 `json:"tokens_in"`
+		TokensOut  int64 `json:"tokens_out"`
+		ToolCalls  int   `json:"tool_calls"`
+		DurationMs int64 `json:"duration_ms"`
 	}
 	_ = json.Unmarshal(event.Payload, &payload)
-	return payload.TokensIn, payload.TokensOut, payload.CostUSD
+	return payload.TokensIn, payload.TokensOut, payload.ToolCalls, payload.DurationMs
+}
+
+func formatDur(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	if ms < 60000 {
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	}
+	m := ms / 60000
+	s := (ms % 60000) / 1000
+	return fmt.Sprintf("%dm%ds", m, s)
 }
