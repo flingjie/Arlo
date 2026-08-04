@@ -93,8 +93,8 @@
 
 **Glyph map:** RUNNING `●`, WAITING/PENDING `○`, BLOCKED `■`, COMPLETED `✓`, FAILED `✗`, READY `↻`, selection cursor `▶`
 
-- [ ] Update `TestStatusIconAllStatuses`; implement icons + row cursor; Yellow for gate (no Purple/Orange on status paths); `NormalBorder` / single-line; focus Cyan vs dim Gray borders
-- [ ] `go test -race ./internal/tui/` PASS
+- [x] Update `TestStatusIconAllStatuses`; implement icons + row cursor; Yellow for gate (no Purple/Orange on status paths); `NormalBorder` / single-line; focus Cyan vs dim Gray borders
+- [x] `go test -race ./internal/tui/` PASS
 
 ---
 
