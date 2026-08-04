@@ -125,11 +125,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
-			if m.ui.InspectorOpen {
-				m.ui.InspectorOpen = false
-				m.ui.Focus = FocusWorkflow
-				return m, nil
-			}
 			if m.ui.FilterOpen {
 				m.ui.FilterOpen = false
 				return m, nil
@@ -142,31 +137,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "tab":
-			if m.ui.Focus == FocusWorkflow {
+			// Cycle focus: workflow → timeline → inspector → workflow
+			switch m.ui.Focus {
+			case FocusWorkflow:
 				m.ui.Focus = FocusTimeline
 				m.workflowPanel.SetFocus(false)
 				m.timelinePanel.SetFocus(true)
-			} else if m.ui.Focus == FocusTimeline {
-				m.ui.Focus = FocusWorkflow
+			case FocusTimeline:
+				m.ui.Focus = FocusInspector
 				m.timelinePanel.SetFocus(false)
+			case FocusInspector:
+				m.ui.Focus = FocusWorkflow
 				m.workflowPanel.SetFocus(true)
 			}
 
-		case "enter":
+		case "up", "k":
 			if m.ui.Focus == FocusWorkflow {
-				nodeID := m.workflowPanel.GetSelectedNode()
-				if nodeID != "" {
-					for _, n := range m.wf.Nodes {
-						if n.NodeId == nodeID {
-							m.inspectorPanel.SetNode(n)
-							break
-						}
-					}
-					m.ui.InspectorOpen = true
-					m.ui.SelectedNode = nodeID
-					m.ui.Focus = FocusTimeline
-				}
+				m.workflowPanel.Update(msg)
+			} else if m.ui.Focus == FocusTimeline {
+				m.timelinePanel.Update(msg)
 			}
+			m.syncInspectorToSelection()
+			return m, nil
+
+		case "down", "j":
+			if m.ui.Focus == FocusWorkflow {
+				m.workflowPanel.Update(msg)
+			} else if m.ui.Focus == FocusTimeline {
+				m.timelinePanel.Update(msg)
+			}
+			m.syncInspectorToSelection()
+			return m, nil
+
+		case "enter":
+			m.syncInspectorToSelection()
 
 		case ":":
 			m.ui.CommandMode = true
@@ -174,27 +178,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "1", "2", "3", "4", "5":
-			if m.ui.InspectorOpen {
-				switch msg.String() {
-				case "1":
-					m.inspectorPanel.SetTab(TabSummary)
-				case "2":
-					m.inspectorPanel.SetTab(TabLogs)
-				case "3":
-					m.inspectorPanel.SetTab(TabPrompt)
-				case "4":
-					m.inspectorPanel.SetTab(TabArtifacts)
-				case "5":
-					m.inspectorPanel.SetTab(TabMetrics)
-				}
-				return m, nil
+			switch msg.String() {
+			case "1":
+				m.inspectorPanel.SetTab(TabSummary)
+			case "2":
+				m.inspectorPanel.SetTab(TabLogs)
+			case "3":
+				m.inspectorPanel.SetTab(TabPrompt)
+			case "4":
+				m.inspectorPanel.SetTab(TabArtifacts)
+			case "5":
+				m.inspectorPanel.SetTab(TabMetrics)
 			}
+			return m, nil
 
 		case "f":
-			if !m.ui.InspectorOpen {
-				m.ui.FilterOpen = !m.ui.FilterOpen
-				return m, nil
-			}
+			m.ui.FilterOpen = !m.ui.FilterOpen
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -220,16 +220,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.startedAt != "" {
 				m.wf.StartedAt, _ = time.Parse(time.RFC3339, msg.startedAt)
 			}
+
+			// Auto-select first root node for inspector.
+			if m.ui.SelectedNode == "" {
+				for _, n := range msg.nodes {
+					if len(n.DependsOn) == 0 {
+						m.ui.SelectedNode = n.NodeId
+						break
+					}
+				}
+			}
+
 			m.dispatcher.Emit(WorkflowUpdatedEvent{
 				WorkflowID: m.workflow,
 				Status:     msg.status,
 				Version:    msg.version,
 				Nodes:      msg.nodes,
 			})
+			m.syncInspectorToSelection()
 		}
 
 	case streamReadyMsg:
-		// Persistent event stream is live — start consuming events.
 		cmds = append(cmds, m.client.RecvEvent())
 
 	case eventMsg:
@@ -265,12 +276,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Route to focused panel.
-	if m.ui.Focus == FocusWorkflow {
+	switch m.ui.Focus {
+	case FocusWorkflow:
 		cmd, _ := m.workflowPanel.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	} else if m.ui.Focus == FocusTimeline {
+	case FocusTimeline:
 		cmd, _ := m.timelinePanel.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -293,6 +305,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// syncInspectorToSelection updates the inspector with the currently selected node.
+func (m *Model) syncInspectorToSelection() {
+	nodeID := m.workflowPanel.GetSelectedNode()
+	if nodeID == "" && len(m.wf.Nodes) > 0 {
+		nodeID = m.wf.Nodes[0].NodeId
+	}
+	if nodeID == "" {
+		return
+	}
+	m.ui.SelectedNode = nodeID
+	for _, n := range m.wf.Nodes {
+		if n.NodeId == nodeID {
+			m.inspectorPanel.SetNode(n)
+			break
+		}
+	}
+}
+
 // View renders the full TUI.
 func (m *Model) View() string {
 	if m.err != nil {
@@ -310,28 +340,38 @@ func (m *Model) View() string {
 
 func (m *Model) renderDashboard() string {
 	w := m.ui.Width
-	if w < 40 {
+	if w < 80 {
 		w = 80
 	}
 	h := m.ui.Height
-	if h < 10 {
+	if h < 15 {
 		h = 24
 	}
 
 	overview := m.renderOverview(w)
 
-	leftWidth := w / 2
-	left := m.workflowPanel.View(leftWidth)
-
-	rightWidth := w - leftWidth - 2
-	var right string
-	if m.ui.InspectorOpen {
-		right = m.inspectorPanel.View(rightWidth, h-5)
-	} else {
-		right = m.timelinePanel.View(rightWidth, h-5)
+	// 25% | 50% | 25% split.
+	leftW := w * 25 / 100
+	if leftW < 20 {
+		leftW = 20
 	}
+	rightW := w * 25 / 100
+	if rightW < 20 {
+		rightW = 20
+	}
+	midW := w - leftW - rightW - 2 // -2 for JoinHorizontal spacing
 
-	panels := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	panelH := h - 4 // minus overview + command bar + spacing
+
+	left := m.workflowPanel.View(leftW)
+	mid := m.timelinePanel.View(midW, panelH)
+	right := m.inspectorPanel.View(rightW, panelH)
+
+	panels := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(leftW).Render(left),
+		lipgloss.NewStyle().Width(midW).Render(mid),
+		lipgloss.NewStyle().Width(rightW).Render(right),
+	)
 
 	status := m.renderCommandBar(w)
 
@@ -349,50 +389,72 @@ func (m *Model) renderOverview(width int) string {
 		status = "LOADING"
 	}
 
-	completed, failed := 0, 0
+	active, completed, failed := 0, 0, 0
 	for _, n := range m.wf.Nodes {
 		switch n.Status {
 		case "COMPLETED":
 			completed++
 		case "FAILED", "CANCELLED":
-			completed++
 			failed++
+		case "RUNNING":
+			active++
 		}
 	}
 	total := len(m.wf.Nodes)
 
 	elapsed := ""
 	if !m.wf.StartedAt.IsZero() {
-		elapsed = time.Since(m.wf.StartedAt).Round(time.Second).String()
+		d := time.Since(m.wf.StartedAt).Round(time.Second)
+		if d < time.Minute {
+			elapsed = fmt.Sprintf("%ds", int(d.Seconds()))
+		} else if d < time.Hour {
+			elapsed = fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+		} else {
+			elapsed = fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+		}
 	}
 
-	bar := ProgressBar(completed, total, 10)
+	// Status icon.
+	statusIcon := "●"
+	statusColor := YellowStyle
+	switch status {
+	case "COMPLETED":
+		statusIcon = "✓"
+		statusColor = GreenStyle
+	case "FAILED":
+		statusIcon = "✗"
+		statusColor = RedStyle
+	case "ACTIVE":
+		statusIcon = "●"
+		statusColor = YellowStyle
+	}
 
-	left := fmt.Sprintf("%s %s  %s  %s  %d nodes",
-		CyanStyle.Render("Arlo"),
-		WhiteStyle.Render(m.workflow),
-		YellowStyle.Render(status),
-		elapsed,
-		total,
-	)
+	bar := ProgressBar(completed+failed, total, 10)
+
+	parts := []string{
+		CyanStyle.Render(m.workflow),
+		statusColor.Render(fmt.Sprintf("%s %s", statusIcon, status)),
+	}
+	if elapsed != "" {
+		parts = append(parts, WhiteStyle.Render(elapsed))
+	}
+	parts = append(parts, bar)
+	parts = append(parts, GrayStyle.Render(fmt.Sprintf("nodes %d", total)))
+	if active > 0 {
+		parts = append(parts, YellowStyle.Render(fmt.Sprintf("active %d", active)))
+	}
 	if failed > 0 {
-		left += "  " + RedStyle.Render(fmt.Sprintf("✗%d", failed))
+		parts = append(parts, RedStyle.Render(fmt.Sprintf("failed %d", failed)))
 	}
-	right := bar
 
-	leftLen := lipgloss.Width(left)
-	rightLen := lipgloss.Width(right)
-	padding := width - leftLen - rightLen - 2
-	if padding < 1 {
-		padding = 1
-	}
+	left := strings.Join(parts, "  ")
 
 	return lipgloss.NewStyle().
 		Background(DarkBg).
 		Foreground(lipgloss.Color("252")).
 		Width(width).
 		Padding(0, 1).
-		Render(left + strings.Repeat(" ", padding) + right)
+		Render(left)
 }
 
 func (m *Model) renderCommandBar(width int) string {
@@ -408,11 +470,9 @@ func (m *Model) renderCommandBar(width int) string {
 		return StatusBarStyle.Width(width).Render(WhiteStyle.Render(msg))
 	}
 
-	cmdText := ":a[ttach] :ap[rove] :rj[ect] :f[ilter] :rf[resh] :h[elp] :q[uit]"
-	// Truncate if the text is wider than the available space.
-	if width > 4 && len(cmdText) > width-2 {
-		cmdText = cmdText[:width-4] + ".."
-	}
+	// NORMAL mode commands.
+	cmds := []string{":a", ":ap", ":rj", ":f", ":rf", ":h", ":q"}
+	cmdText := strings.Join(cmds, " ")
 	return StatusBarStyle.Width(width).Render(GrayStyle.Render(cmdText))
 }
 

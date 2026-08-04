@@ -12,7 +12,7 @@ type FocusTarget int
 const (
 	FocusWorkflow FocusTarget = iota
 	FocusTimeline
-	FocusCommand
+	FocusInspector
 )
 
 // InspectorTab represents the active tab in the Node Inspector.

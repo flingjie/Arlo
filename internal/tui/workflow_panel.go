@@ -176,18 +176,26 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inn
 	label := displayStatus(n)
 	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
 
-	// │ ▶ analyze              RUNNING │
+	// Main line: │ ▶ analyze              RUNNING │
 	prefix := icon + " " + n.NodeId
 	styledLabel := statusStyle.Render(label)
-	gap := inner - lipgloss.Width(prefix) - lipgloss.Width(styledLabel) - 1 // -1 for space after prefix
+	gap := inner - lipgloss.Width(prefix) - lipgloss.Width(styledLabel) - 1
 	if gap < 1 {
 		gap = 1
 	}
 	sb.WriteString("│ " + prefix + strings.Repeat(" ", gap) + styledLabel + " │\n")
 
-	// Sub-line: session or gate info.
-	if n.Status == "RUNNING" && n.SessionId != "" {
-		sub := GrayStyle.Render("└─ " + n.SessionId)
+	// Sub-lines with details.
+	if n.SessionId != "" {
+		sub := GrayStyle.Render("sess:" + n.SessionId)
+		subGap := inner - lipgloss.Width(sub) - 1
+		if subGap < 1 {
+			subGap = 1
+		}
+		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
+	}
+	if n.RetryCount > 0 {
+		sub := YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount))
 		subGap := inner - lipgloss.Width(sub) - 1
 		if subGap < 1 {
 			subGap = 1
@@ -195,7 +203,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inn
 		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
 	}
 	if isBlocked(n) {
-		sub := PurpleStyle.Render("└─ gate: human_approval")
+		sub := PurpleStyle.Render("gate: human_approval")
 		subGap := inner - lipgloss.Width(sub) - 1
 		if subGap < 1 {
 			subGap = 1
@@ -271,10 +279,38 @@ func (p *WorkflowPanel) flatIndex(target *arlov1.NodeState) int {
 	return idx
 }
 
-// GetSelectedNode returns the node ID of the currently selected node.
+// GetSelectedNode returns the node ID of the currently selected node
+// based on the visual flat index.
 func (p *WorkflowPanel) GetSelectedNode() string {
-	if p.selected >= 0 && p.selected < len(p.nodes) {
-		return p.nodes[p.selected].NodeId
+	idx := -1
+	var result string
+	var walk func(n *arlov1.NodeState) bool
+	walk = func(n *arlov1.NodeState) bool {
+		idx++
+		if idx == p.selected {
+			result = n.NodeId
+			return true
+		}
+		if !p.collapsed[n.NodeId] {
+			for _, childID := range n.Children {
+				for _, cn := range p.nodes {
+					if cn.NodeId == childID {
+						if walk(cn) {
+							return true
+						}
+						break
+					}
+				}
+			}
+		}
+		return false
+	}
+	for _, n := range p.nodes {
+		if len(n.DependsOn) == 0 {
+			if walk(n) {
+				return result
+			}
+		}
 	}
 	return ""
 }
