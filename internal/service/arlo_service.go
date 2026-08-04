@@ -6,53 +6,44 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
 	"github.com/lingjiefan/arlo/internal/domain"
-	"github.com/lingjiefan/arlo/internal/reconciler"
-	"github.com/lingjiefan/arlo/internal/runtime"
 	"github.com/lingjiefan/arlo/internal/state"
 	"github.com/lingjiefan/arlo/internal/store"
-	"github.com/lingjiefan/arlo/internal/workflow"
-	"github.com/lingjiefan/arlo/internal/workspace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // ArloService implements the gRPC ArloServiceServer interface.
 type ArloService struct {
 	arlov1.UnimplementedArloServiceServer
 
-	eventStore   store.EventStore
-	stateStore   state.StateStore
-	engine       *workflow.Engine
-	reconciler   *reconciler.Reconciler
-	runtimeMgr   *runtime.Manager
-	workspaceMgr *workspace.Manager
+	eventStore store.EventStore
+	stateStore state.StateStore
+	engine     WorkflowEngine
+	reconciler Reconciler
+	runtimeMgr RuntimeManager
 }
 
 // New creates a new ArloService.
 func New(
 	es store.EventStore,
 	ss state.StateStore,
-	eng *workflow.Engine,
-	rec *reconciler.Reconciler,
-	rm *runtime.Manager,
-	wm *workspace.Manager,
+	eng WorkflowEngine,
+	rec Reconciler,
+	rm RuntimeManager,
 ) *ArloService {
 	return &ArloService{
-		eventStore:   es,
-		stateStore:   ss,
-		engine:       eng,
-		reconciler:   rec,
-		runtimeMgr:   rm,
-		workspaceMgr: wm,
+		eventStore: es,
+		stateStore: ss,
+		engine:     eng,
+		reconciler: rec,
+		runtimeMgr: rm,
 	}
 }
 
@@ -465,7 +456,3 @@ func marshalJSON(v interface{}) []byte {
 	}
 	return data
 }
-
-// Ensure unused imports don't cause errors.
-var _ = io.Discard
-var _ = emptypb.Empty{}

@@ -90,7 +90,7 @@ func main() {
 	rec := reconciler.New(ss, es, eng, rtMgr, wsMgr, skillReg)
 
 	// ── gRPC Service ─────────────────────────────
-	svc := service.New(es, ss, eng, rec, rtMgr, wsMgr)
+	svc := service.New(es, ss, eng, rec, rtMgr)
 
 	// ── Start Reconciler background loop ─────────
 	ctx, cancel := context.WithCancel(context.Background())
