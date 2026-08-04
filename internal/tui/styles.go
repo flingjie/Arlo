@@ -4,33 +4,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Semantic palette — keep to ~6 roles (see TUI redesign spec).
 var (
-	// Colors
-	Green  = lipgloss.Color("42")
-	Yellow = lipgloss.Color("226")
-	Red    = lipgloss.Color("196")
-	Blue   = lipgloss.Color("39")
-	Gray   = lipgloss.Color("244")
+	Green  = lipgloss.Color("42")  // RUNNING / success
+	Yellow = lipgloss.Color("226") // BLOCKED / warn
+	Red    = lipgloss.Color("196") // FAILED / error
+	Blue   = lipgloss.Color("39")  // selection background accent
+	Gray   = lipgloss.Color("244") // secondary / unfocused
 	White  = lipgloss.Color("255")
 	DarkBg = lipgloss.Color("236")
-	Cyan   = lipgloss.Color("86")
-	Purple = lipgloss.Color("129")
-	Orange = lipgloss.Color("214")
+	Cyan   = lipgloss.Color("86") // titles / focused border
 
-	// Styles
 	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(Cyan).
-			MarginBottom(1)
+			Foreground(Cyan)
 
+	// PanelStyle is the unfocused single-line panel chrome.
 	PanelStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(Blue).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(Gray).
 			Padding(0, 1)
 
 	StatusBarStyle = lipgloss.NewStyle().
-		Background(DarkBg).
-		Foreground(lipgloss.Color("252"))
+			Background(DarkBg).
+			Foreground(lipgloss.Color("252"))
 
 	CommandPromptStyle = lipgloss.NewStyle().
 				Foreground(Yellow).
@@ -42,44 +39,57 @@ var (
 
 	NormalStyle = lipgloss.NewStyle()
 
-	GreenStyle   = lipgloss.NewStyle().Foreground(Green)
-	YellowStyle  = lipgloss.NewStyle().Foreground(Yellow)
-	RedStyle     = lipgloss.NewStyle().Foreground(Red)
-	GrayStyle    = lipgloss.NewStyle().Foreground(Gray)
-	WhiteStyle   = lipgloss.NewStyle().Foreground(White)
-	CyanStyle    = lipgloss.NewStyle().Foreground(Cyan)
-	PurpleStyle  = lipgloss.NewStyle().Foreground(Purple)
-	OrangeStyle  = lipgloss.NewStyle().Foreground(Orange)
+	GreenStyle  = lipgloss.NewStyle().Foreground(Green)
+	YellowStyle = lipgloss.NewStyle().Foreground(Yellow)
+	RedStyle    = lipgloss.NewStyle().Foreground(Red)
+	GrayStyle   = lipgloss.NewStyle().Foreground(Gray)
+	WhiteStyle  = lipgloss.NewStyle().Foreground(White)
+	CyanStyle   = lipgloss.NewStyle().Foreground(Cyan)
 
-	// Dim style for completed/terminal nodes.
-	DimStyle = lipgloss.NewStyle().Foreground(Gray).Faint(true)
+	DimStyle     = lipgloss.NewStyle().Foreground(Gray).Faint(true)
+	RunningStyle = lipgloss.NewStyle().Foreground(Green).Bold(true)
+	FailedStyle  = lipgloss.NewStyle().Foreground(Red)
 
-	// Running style for the currently executing node.
-	RunningStyle = lipgloss.NewStyle().Foreground(White).Bold(true)
-
-	// Failed style for failed/cancelled nodes — stands out in red.
-	FailedStyle = lipgloss.NewStyle().Foreground(Red)
-
-	// Progress bar styles.
 	ProgressFull  = lipgloss.NewStyle().Foreground(Green)
 	ProgressEmpty = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 )
 
-// StatusIcon returns a descriptive icon for a node status.
+// PanelChrome returns single-line panel border style; focused borders are Cyan.
+func PanelChrome(focused bool) lipgloss.Style {
+	fg := Gray
+	if focused {
+		fg = Cyan
+	}
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(fg).
+		Padding(0, 1)
+}
+
+// SelectionCursor returns the row prefix for the selected node (not a status glyph).
+func SelectionCursor(selected bool) string {
+	if selected {
+		return CyanStyle.Render("▶")
+	}
+	return " "
+}
+
+// StatusIcon returns a dual-coded glyph for a display/raw status string.
 func StatusIcon(status string) string {
 	switch status {
 	case "COMPLETED":
 		return GreenStyle.Render("✓")
-	case "RUNNING":
-		// ▶ is the running focus marker — the only bright icon on screen.
-		return YellowStyle.Render("▶")
-	case "FAILED":
+	case "RUNNING", "STARTING":
+		return GreenStyle.Render("●")
+	case "FAILED", "CANCELLED":
 		return RedStyle.Render("✗")
-	case "WAITING":
-		return PurpleStyle.Render("⏸")
+	case "BLOCKED":
+		return YellowStyle.Render("■")
+	case "WAITING", "PENDING":
+		return GrayStyle.Render("○")
 	case "READY":
 		return CyanStyle.Render("↻")
-	default: // PENDING
+	default:
 		return GrayStyle.Render("○")
 	}
 }
@@ -96,8 +106,8 @@ func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
 		return DimStyle
 	case "FAILED", "CANCELLED":
 		return FailedStyle
-	case "WAITING":
-		return PurpleStyle
+	case "WAITING", "PENDING", "BLOCKED":
+		return GrayStyle
 	default:
 		return DimStyle
 	}
@@ -110,16 +120,18 @@ func statusTextStyle(status string, isSelected bool) lipgloss.Style {
 	}
 	switch status {
 	case "RUNNING", "STARTING":
-		return YellowStyle.Bold(true)
+		return GreenStyle.Bold(true)
 	case "COMPLETED":
 		return GreenStyle
 	case "FAILED", "CANCELLED":
 		return RedStyle
-	case "WAITING":
-		return PurpleStyle
+	case "BLOCKED":
+		return YellowStyle.Bold(true)
+	case "WAITING", "PENDING":
+		return GrayStyle
 	case "READY":
 		return CyanStyle
-	default: // PENDING → WAITING
+	default:
 		return GrayStyle
 	}
 }

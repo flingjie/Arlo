@@ -21,9 +21,8 @@ type TimelinePanel struct {
 // NewTimelinePanel creates a new timeline panel.
 func NewTimelinePanel(dispatcher *Dispatcher) *TimelinePanel {
 	vp := viewport.New(80, 20)
-	vp.Style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62"))
+	// Border is drawn by PanelChrome in View — keep viewport borderless.
+	vp.Style = lipgloss.NewStyle()
 
 	return &TimelinePanel{
 		Filter:     DefaultFilter(),
@@ -123,5 +122,5 @@ func (p *TimelinePanel) View(width, height int) string {
 	}
 
 	p.viewport.SetContent(sb.String())
-	return PanelStyle.Width(width).Render(p.viewport.View())
+	return PanelChrome(p.focused).Width(width).Render(p.viewport.View())
 }

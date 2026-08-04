@@ -87,15 +87,16 @@ func (p *WorkflowPanel) View(width, height int) string {
 	contentW := w - 2 // space between │ borders
 
 	var sb strings.Builder
-	cyan := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
 	gray := lipgloss.NewStyle().Foreground(Gray)
 
 	// ┌─ WORKFLOW ──────────────────┐  (* when focused)
 	title := "WORKFLOW"
+	titleStyle := GrayStyle.Bold(true)
 	if p.focused {
 		title = "WORKFLOW *"
+		titleStyle = CyanStyle.Bold(true)
 	}
-	sb.WriteString(boxLine("┌─ "+cyan.Render(title), "─", "┐", w))
+	sb.WriteString(boxLine("┌─ "+titleStyle.Render(title), "─", "┐", w))
 
 	// │ Task: wf-xxx               │
 	sb.WriteString(boxLine("│ "+gray.Render("Task:")+" "+WhiteStyle.Render(p.wfID), " ", "│", w))
@@ -165,13 +166,15 @@ func displayStatus(n *arlov1.NodeState) string {
 }
 
 func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, contentW int) {
-	icon := StatusIcon(n.Status)
+	selected := p.focused && p.selected == p.flatIndex(n)
+	cursor := SelectionCursor(selected)
 	label := displayStatus(n)
-	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
+	icon := StatusIcon(label)
+	statusStyle := statusTextStyle(label, selected)
 	styledLabel := statusStyle.Render(label)
 
-	// │ ▶ analyze              RUNNING │
-	sb.WriteString(boxLine("│ "+icon+" "+n.NodeId+gapTo(styledLabel, contentW-lipgloss.Width(icon+" "+n.NodeId)-1)+styledLabel, " ", "│", w))
+	prefix := cursor + " " + icon + " " + n.NodeId
+	sb.WriteString(boxLine("│ "+prefix+gapTo(styledLabel, contentW-lipgloss.Width(prefix)-1)+styledLabel, " ", "│", w))
 
 	// Sub-lines.
 	if n.SessionId != "" {
@@ -181,7 +184,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, 
 		sb.WriteString(boxLine("│   "+YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount)), " ", "│", w))
 	}
 	if isBlocked(n) {
-		sb.WriteString(boxLine("│   "+PurpleStyle.Render("gate: human_approval"), " ", "│", w))
+		sb.WriteString(boxLine("│   "+YellowStyle.Render("gate: human_approval"), " ", "│", w))
 	}
 	// Blank separator.
 	if len(n.Children) == 0 || p.collapsed[n.NodeId] {

@@ -106,7 +106,7 @@ func (p *InspectorPanel) SetFocus(focused bool) { p.focused = focused }
 // View renders the inspector.
 func (p *InspectorPanel) View(width, height int) string {
 	if p.node == nil {
-		return PanelStyle.Width(width).Height(height).Render(
+		return PanelChrome(p.focused).Width(width).Height(height).Render(
 			GrayStyle.Render("  select a node to inspect (Enter)"),
 		)
 	}
@@ -142,7 +142,7 @@ func (p *InspectorPanel) View(width, height int) string {
 		p.renderMetrics(&sb)
 	}
 
-	return PanelStyle.Width(width).Height(height).Render(sb.String())
+	return PanelChrome(p.focused).Width(width).Height(height).Render(sb.String())
 }
 
 func (p *InspectorPanel) renderTabBar() string {
@@ -165,10 +165,10 @@ func (p *InspectorPanel) renderSummary(sb *strings.Builder, width int) {
 	n := p.node
 
 	// Hero: icon + name left, status right.
-	icon := StatusIcon(n.Status)
-	statusStyle := statusTextStyle(n.Status, false)
+	icon := StatusIcon(displayStatus(n))
+	statusStyle := statusTextStyle(displayStatus(n), false)
 	name := WhiteStyle.Bold(true).Render(n.NodeId)
-	status := statusStyle.Render(n.Status)
+	status := statusStyle.Render(displayStatus(n))
 	left := icon + " " + name
 	gap := width - lipgloss.Width(left) - lipgloss.Width(status) - 2
 	if gap < 1 {

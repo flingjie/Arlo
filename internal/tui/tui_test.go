@@ -1007,11 +1007,14 @@ func TestProgressBarZero(t *testing.T) {
 func TestStatusIconAllStatuses(t *testing.T) {
 	tests := map[string]string{
 		"COMPLETED": "✓",
-		"RUNNING":   "▶",
+		"RUNNING":   "●",
+		"STARTING":  "●",
 		"FAILED":    "✗",
-		"WAITING":   "⏸",
-		"READY":     "↻",
+		"CANCELLED": "✗",
+		"BLOCKED":   "■",
+		"WAITING":   "○",
 		"PENDING":   "○",
+		"READY":     "↻",
 		"UNKNOWN":   "○",
 	}
 	for status, expected := range tests {
@@ -1019,6 +1022,42 @@ func TestStatusIconAllStatuses(t *testing.T) {
 		if !strings.Contains(icon, expected) {
 			t.Errorf("StatusIcon(%q) expected to contain %q, got %q", status, expected, icon)
 		}
+	}
+}
+
+func TestSelectionCursor(t *testing.T) {
+	if !strings.Contains(SelectionCursor(true), "▶") {
+		t.Fatal("selected cursor should be ▶")
+	}
+	if stripAnsi(SelectionCursor(false)) != " " {
+		t.Fatal("unselected cursor should be a space")
+	}
+}
+
+func TestWorkflowPanelGlyphsAndBlocked(t *testing.T) {
+	d := NewDispatcher()
+	p := NewWorkflowPanel(d)
+	p.SetFocus(true)
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1",
+		Status:     "ACTIVE",
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "analyze", Status: "RUNNING", SessionId: "s1"},
+			{NodeId: "review", Status: "WAITING", Gate: "human_approval"},
+		},
+	})
+	view := stripAnsi(p.View(40, 20))
+	if !strings.Contains(view, "●") {
+		t.Fatalf("expected RUNNING ●:\n%s", view)
+	}
+	if !strings.Contains(view, "■") || !strings.Contains(view, "BLOCKED") {
+		t.Fatalf("expected BLOCKED ■:\n%s", view)
+	}
+	if !strings.Contains(view, "▶") {
+		t.Fatalf("expected selection cursor ▶:\n%s", view)
+	}
+	if strings.Contains(view, "⏸") {
+		t.Fatal("old WAITING glyph still present")
 	}
 }
 
