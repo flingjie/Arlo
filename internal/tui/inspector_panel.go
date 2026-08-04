@@ -173,7 +173,7 @@ func (p *InspectorPanel) renderSummary(sb *strings.Builder) {
 
 	icon := StatusIcon(n.Status)
 	statusStyle := statusTextStyle(n.Status, false)
-	sb.WriteString(fmt.Sprintf("  %s  %s\n", icon, statusStyle.Render(n.Status)))
+	sb.WriteString(fmt.Sprintf("  %s  %s  %s\n", icon, WhiteStyle.Render(n.NodeId), statusStyle.Render(n.Status)))
 
 	if n.StartedAt != "" {
 		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Started"), WhiteStyle.Render(relativeTime(n.StartedAt))))
