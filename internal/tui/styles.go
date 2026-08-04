@@ -1,6 +1,8 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
 	// Colors
@@ -13,6 +15,7 @@ var (
 	DarkBg = lipgloss.Color("236")
 	Cyan   = lipgloss.Color("86")
 	Purple = lipgloss.Color("129")
+	Orange = lipgloss.Color("214")
 
 	// Styles
 	HeaderStyle = lipgloss.NewStyle().
@@ -26,9 +29,8 @@ var (
 			Padding(0, 1)
 
 	StatusBarStyle = lipgloss.NewStyle().
-			Background(DarkBg).
-			Foreground(lipgloss.Color("252")).
-			Padding(0, 1)
+		Background(DarkBg).
+		Foreground(lipgloss.Color("252"))
 
 	CommandPromptStyle = lipgloss.NewStyle().
 				Foreground(Yellow).
@@ -47,6 +49,7 @@ var (
 	WhiteStyle   = lipgloss.NewStyle().Foreground(White)
 	CyanStyle    = lipgloss.NewStyle().Foreground(Cyan)
 	PurpleStyle  = lipgloss.NewStyle().Foreground(Purple)
+	OrangeStyle  = lipgloss.NewStyle().Foreground(Orange)
 
 	// Dim style for completed/terminal nodes.
 	DimStyle = lipgloss.NewStyle().Foreground(Gray).Faint(true)
@@ -56,22 +59,27 @@ var (
 
 	// Failed style for failed/cancelled nodes — stands out in red.
 	FailedStyle = lipgloss.NewStyle().Foreground(Red)
+
+	// Progress bar styles.
+	ProgressFull  = lipgloss.NewStyle().Foreground(Green)
+	ProgressEmpty = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 )
 
-// StatusIcon returns a colored dot for a node status.
+// StatusIcon returns a descriptive icon for a node status.
 func StatusIcon(status string) string {
 	switch status {
 	case "COMPLETED":
-		return GreenStyle.Render("●")
-	case "RUNNING", "STARTING":
-		return YellowStyle.Render("●")
-	case "FAILED", "CANCELLED":
-		return RedStyle.Render("●")
+		return GreenStyle.Render("✓")
+	case "RUNNING":
+		// ▶ is the running focus marker — the only bright icon on screen.
+		return YellowStyle.Render("▶")
+	case "FAILED":
+		return RedStyle.Render("✗")
 	case "WAITING":
-		return PurpleStyle.Render("●")
+		return PurpleStyle.Render("⏸")
 	case "READY":
-		return CyanStyle.Render("●")
-	default:
+		return CyanStyle.Render("↻")
+	default: // PENDING
 		return GrayStyle.Render("○")
 	}
 }
@@ -91,14 +99,14 @@ func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
 	case "WAITING":
 		return PurpleStyle
 	default:
-		return NormalStyle
+		return DimStyle
 	}
 }
 
 // ProgressBar renders a progress bar.
 func ProgressBar(completed, total int, width int) string {
 	if total == 0 {
-		return GrayStyle.Render("[" + repeatStr(" ", width) + "]")
+		return ProgressEmpty.Render("[") + repeatStr(" ", width) + ProgressEmpty.Render("]")
 	}
 	ratio := float64(completed) / float64(total)
 	filled := int(ratio * float64(width))
@@ -106,16 +114,16 @@ func ProgressBar(completed, total int, width int) string {
 		filled = width
 	}
 	empty := width - filled
-	return lipgloss.NewStyle().Foreground(Green).Render("[" +
-		repeatStr("█", filled) +
-		repeatStr("░", empty) +
-		"]")
+	return ProgressFull.Render("[") +
+		ProgressFull.Render(repeatStr("█", filled)) +
+		ProgressEmpty.Render(repeatStr("░", empty)) +
+		ProgressFull.Render("]")
 }
 
 func repeatStr(s string, n int) string {
-	result := ""
+	b := make([]byte, 0, n*len(s))
 	for i := 0; i < n; i++ {
-		result += s
+		b = append(b, s...)
 	}
-	return result
+	return string(b)
 }

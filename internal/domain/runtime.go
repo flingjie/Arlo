@@ -33,6 +33,7 @@ type RuntimeInstance struct {
 	WorkDir     string          `json:"work_dir"`
 	Prompt      string          `json:"prompt"`
 	State       RuntimeState    `json:"state"`
+	ExitCode    int             `json:"exit_code,omitempty"`
 }
 
 // RuntimeConfig configures how an agent runtime behaves.

@@ -117,6 +117,17 @@ func (m *Manager) DestroyInstance(ctx context.Context, id string) error {
 	return nil
 }
 
+// MarkExited is called by adapters when the underlying process exits.
+// It updates the instance state so the reconciler can detect the exit via polling.
+func (m *Manager) MarkExited(id string, exitCode int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.instances[id]; ok {
+		inst.State = domain.RuntimeStateExited
+		inst.ExitCode = exitCode
+	}
+}
+
 // GetInstance returns a runtime instance by ID.
 func (m *Manager) GetInstance(ctx context.Context, id string) (*domain.RuntimeInstance, error) {
 	m.mu.RLock()

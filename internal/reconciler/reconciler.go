@@ -112,7 +112,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 		return fmt.Errorf("reconcile: graph not found for workflow %s", workflowID)
 	}
 
-	// 2. COMPUTE desired actions.
+	// 2. REAP — detect exited runtimes and mark nodes as COMPLETED/FAILED.
+	//    Must happen BEFORE Evaluate so newly-completed nodes unblock dependents
+	//    within the same tick.
+	r.reapRuntimes(ctx, workflowID, currentState)
+
+	// Re-read state after reaping — reaped nodes may have changed status.
+	currentState, err = r.stateStore.GetWorkflow(ctx, workflowID)
+	if err != nil {
+		return fmt.Errorf("reconcile: re-read workflow %s after reap: %w", workflowID, err)
+	}
+
+	// 3. COMPUTE desired actions.
 	decisions, err := r.engine.Evaluate(ctx, graph, *currentState)
 	if err != nil {
 		return fmt.Errorf("reconcile: evaluate %s: %w", workflowID, err)
@@ -122,7 +133,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 		return nil
 	}
 
-	// 3. ACT — execute each decision.
+	// 4. ACT — execute each decision.
 	for _, d := range decisions {
 		if err := r.executeDecision(ctx, workflowID, d); err != nil {
 			slog.Error("reconcile: execute decision failed",
@@ -137,6 +148,84 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 	}
 
 	return nil
+}
+
+// reapRuntimes checks RUNNING nodes for exited runtime instances and emits
+// NODE_COMPLETED or NODE_FAILED events.
+func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state *domain.WorkflowState) {
+	if r.runtimeMgr == nil {
+		return
+	}
+
+	for _, ns := range state.Nodes {
+		if ns.Status != domain.NodeStatusRunning {
+			continue
+		}
+		instanceID := fmt.Sprintf("rt-%s-%d", ns.NodeID, ns.RetryCount+1)
+		inst, err := r.runtimeMgr.GetInstance(ctx, instanceID)
+		if err != nil {
+			continue // instance may not have been started yet
+		}
+		if inst.State != domain.RuntimeStateExited {
+			continue
+		}
+
+		success := inst.ExitCode == 0
+		slog.Info("runtime exited, emitting completion",
+			"workflow", workflowID,
+			"node", ns.NodeID,
+			"exit_code", inst.ExitCode,
+			"success", success,
+		)
+
+		if success {
+			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeCompleted,
+				domain.NodeCompleted{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					SessionID:  ns.SessionID,
+				})
+		} else if ns.RetryCount < 1 { // one retry
+			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+				domain.NodeFailed{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					SessionID:  ns.SessionID,
+					Reason:     fmt.Sprintf("exit code %d", inst.ExitCode),
+					Retryable:  true,
+				})
+		} else {
+			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+				domain.NodeFailed{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					SessionID:  ns.SessionID,
+					Reason:     fmt.Sprintf("exit code %d (retries exhausted)", inst.ExitCode),
+					Retryable:  false,
+				})
+		}
+	}
+}
+
+// emitNodeEvent appends a node event and applies it to projections.
+func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns domain.NodeState, eventType store.EventType, payload interface{}) {
+	data, _ := json.Marshal(payload)
+
+	event := store.Event{
+		ID:       fmt.Sprintf("evt-reap-%s-%d", ns.NodeID, time.Now().UnixNano()),
+		Type:     eventType,
+		StreamID: "node-" + ns.NodeID,
+		Payload:  data,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+ns.NodeID, []store.Event{event})
+	if err != nil {
+		slog.Error("reap: append event failed", "node", ns.NodeID, "error", err)
+		return
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		slog.Error("reap: apply event failed", "node", ns.NodeID, "error", err)
+	}
 }
 
 // ── Decision Execution ───────────────────────────

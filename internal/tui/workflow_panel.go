@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
 	tea "github.com/charmbracelet/bubbletea"
@@ -106,48 +107,47 @@ func (p *WorkflowPanel) View(width int) string {
 		return PanelStyle.Width(width).Render(sb.String())
 	}
 
-	// Build a root set: nodes with no dependencies are roots.
-	for i, n := range p.nodes {
+	// Roots: nodes with no dependencies.
+	for _, n := range p.nodes {
 		if len(n.DependsOn) == 0 {
-			p.renderNode(&sb, n, 0, i)
+			p.renderNode(&sb, n)
 		}
 	}
 
 	return PanelStyle.Width(width).Render(sb.String())
 }
 
-func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, depth int, idx int) {
-	indent := strings.Repeat("  ", depth)
-	expandIcon := "▼"
-	if p.collapsed[n.NodeId] {
-		expandIcon = "▶"
-	}
-
-	lineStyle := nodeLineStyle(n.Status, p.focused && p.selected == idx)
-
+// renderNode renders a single node and its subtree in dependency order.
+// Children are rendered at the same visual level — no indentation.
+func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState) {
 	icon := StatusIcon(n.Status)
-	sb.WriteString(lineStyle.Render(fmt.Sprintf("%s%s %s %s", indent, expandIcon, icon, n.NodeId)))
-	sb.WriteString("\n")
 
-	meta := []string{}
-	meta = append(meta, GrayStyle.Render(n.Status))
-	if n.SessionId != "" {
-		meta = append(meta, CyanStyle.Render(n.SessionId))
+	dur := formatNodeDuration(n)
+	if dur != "" {
+		if n.Status == "RUNNING" {
+			dur = "  " + WhiteStyle.Render(dur)
+		} else {
+			dur = "  " + GrayStyle.Render(dur)
+		}
 	}
-	if n.RetryCount > 0 {
-		meta = append(meta, YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount)))
-	}
-	if n.Gate != "" && n.Gate != "none" {
-		meta = append(meta, PurpleStyle.Render(fmt.Sprintf("gate:%s", n.Gate)))
-	}
-	sb.WriteString(fmt.Sprintf("%s  %s\n", indent, strings.Join(meta, "  ")))
 
-	if !p.collapsed[n.NodeId] {
+	isSelected := p.focused && p.selected == p.flatIndex(n)
+	lineStyle := nodeLineStyle(n.Status, isSelected)
+
+	sb.WriteString(fmt.Sprintf("%s %s%s\n",
+		icon, lineStyle.Render(n.NodeId), dur))
+
+	meta := formatMeta(n)
+	if meta != "" {
+		sb.WriteString(fmt.Sprintf("   %s\n", GrayStyle.Render(meta)))
+	}
+
+	// Render children at same level.
+	if !p.collapsed[n.NodeId] && len(n.Children) > 0 {
 		for _, childID := range n.Children {
 			for _, cn := range p.nodes {
 				if cn.NodeId == childID {
-					sb.WriteString(fmt.Sprintf("%s  ↳\n", indent))
-					p.renderNode(sb, cn, depth+1, idx)
+					p.renderNode(sb, cn)
 					break
 				}
 			}
@@ -171,10 +171,97 @@ func (p *WorkflowPanel) countTerminal() (int, int, int) {
 	return done, failed, len(p.nodes)
 }
 
+// flatIndex finds the flat visual index of a node for selection tracking.
+func (p *WorkflowPanel) flatIndex(target *arlov1.NodeState) int {
+	idx := 0
+	var walk func(n *arlov1.NodeState) bool
+	walk = func(n *arlov1.NodeState) bool {
+		if n.NodeId == target.NodeId {
+			return true
+		}
+		idx++
+		if !p.collapsed[n.NodeId] {
+			for _, childID := range n.Children {
+				for _, cn := range p.nodes {
+					if cn.NodeId == childID {
+						if walk(cn) {
+							return true
+						}
+						break
+					}
+				}
+			}
+		}
+		return false
+	}
+	for _, n := range p.nodes {
+		if len(n.DependsOn) == 0 {
+			if walk(n) {
+				return idx
+			}
+		}
+	}
+	return idx
+}
+
 // GetSelectedNode returns the node ID of the currently selected node.
 func (p *WorkflowPanel) GetSelectedNode() string {
 	if p.selected >= 0 && p.selected < len(p.nodes) {
 		return p.nodes[p.selected].NodeId
 	}
 	return ""
+}
+
+// ── Helpers ──────────────────────────────────────
+
+func formatMeta(n *arlov1.NodeState) string {
+	parts := []string{}
+	if n.RetryCount > 0 {
+		parts = append(parts, fmt.Sprintf("retry:%d", n.RetryCount))
+	}
+	if n.Gate != "" && n.Gate != "none" {
+		parts = append(parts, fmt.Sprintf("gate:%s", n.Gate))
+	}
+	if n.SessionId != "" {
+		parts = append(parts, n.SessionId)
+	}
+	return strings.Join(parts, "  ")
+}
+
+func formatNodeDuration(n *arlov1.NodeState) string {
+	if n.StartedAt == "" {
+		return ""
+	}
+	start, err := time.Parse(time.RFC3339, n.StartedAt)
+	if err != nil {
+		return ""
+	}
+
+	var end time.Time
+	if n.CompletedAt != "" {
+		end, err = time.Parse(time.RFC3339, n.CompletedAt)
+		if err != nil {
+			return ""
+		}
+	} else {
+		end = time.Now()
+	}
+
+	d := end.Sub(start)
+	if d < time.Second {
+		return ""
+	}
+
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	case d < time.Hour:
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		return fmt.Sprintf("%dm%ds", m, s)
+	default:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
 }

@@ -170,16 +170,7 @@ func (s *ArloService) GetWorkflow(ctx context.Context, req *arlov1.GetWorkflowRe
 
 	var nodes []*arlov1.NodeState
 	for _, ns := range wf.Nodes {
-		nodes = append(nodes, &arlov1.NodeState{
-			NodeId:     ns.NodeID,
-			Status:     string(ns.Status),
-			SessionId:  ns.SessionID,
-			RuntimeId:  ns.RuntimeID,
-			RetryCount: int32(ns.RetryCount),
-			DependsOn:  ns.DependsOn,
-			Children:   ns.Children,
-			Gate:       ns.Gate,
-		})
+		nodes = append(nodes, buildNodeState(&ns))
 	}
 
 	return &arlov1.GetWorkflowResponse{
@@ -199,16 +190,7 @@ func (s *ArloService) GetWorkflowSnapshot(ctx context.Context, req *arlov1.GetWo
 
 	var nodes []*arlov1.NodeState
 	for _, ns := range wf.Nodes {
-		nodes = append(nodes, &arlov1.NodeState{
-			NodeId:     ns.NodeID,
-			Status:     string(ns.Status),
-			SessionId:  ns.SessionID,
-			RuntimeId:  ns.RuntimeID,
-			RetryCount: int32(ns.RetryCount),
-			DependsOn:  ns.DependsOn,
-			Children:   ns.Children,
-			Gate:       ns.Gate,
-		})
+		nodes = append(nodes, buildNodeState(&ns))
 	}
 
 	version := s.eventStore.LastPosition()
@@ -434,6 +416,27 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 }
 
 // ── Helpers ──────────────────────────────────────
+
+// buildNodeState converts a domain NodeState to a proto NodeState.
+func buildNodeState(ns *domain.NodeState) *arlov1.NodeState {
+	p := &arlov1.NodeState{
+		NodeId:     ns.NodeID,
+		Status:     string(ns.Status),
+		SessionId:  ns.SessionID,
+		RuntimeId:  ns.RuntimeID,
+		RetryCount: int32(ns.RetryCount),
+		DependsOn:  ns.DependsOn,
+		Children:   ns.Children,
+		Gate:       ns.Gate,
+	}
+	if ns.StartedAt != nil {
+		p.StartedAt = ns.StartedAt.Format(time.RFC3339)
+	}
+	if ns.CompletedAt != nil {
+		p.CompletedAt = ns.CompletedAt.Format(time.RFC3339)
+	}
+	return p
+}
 
 func marshalJSON(v interface{}) []byte {
 	data, err := json.Marshal(v)
