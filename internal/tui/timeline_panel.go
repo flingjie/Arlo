@@ -120,7 +120,7 @@ func (p *TimelinePanel) View(width, height int) string {
 			start = len(p.items) - p.viewport.Height
 		}
 		for _, item := range p.items[start:] {
-			timeStr := item.Time().Format("15:04:05")
+			timeStr := item.Time().Local().Format("15:04:05")
 			levelColor := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Level().Color()))
 			sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
 				GrayStyle.Render(timeStr),
