@@ -352,26 +352,22 @@ func (m *Model) renderDashboard() string {
 
 	// 25% | 50% | 25% split.
 	leftW := w * 25 / 100
-	if leftW < 20 {
-		leftW = 20
+	if leftW < 25 {
+		leftW = 25
 	}
 	rightW := w * 25 / 100
-	if rightW < 20 {
-		rightW = 20
+	if rightW < 25 {
+		rightW = 25
 	}
-	midW := w - leftW - rightW - 2 // -2 for JoinHorizontal spacing
+	midW := w - leftW - rightW
 
 	panelH := h - 4 // minus overview + command bar + spacing
 
-	left := m.workflowPanel.View(leftW)
+	left := m.workflowPanel.View(leftW, panelH)
 	mid := m.timelinePanel.View(midW, panelH)
 	right := m.inspectorPanel.View(rightW, panelH)
 
-	panels := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(leftW).Render(left),
-		lipgloss.NewStyle().Width(midW).Render(mid),
-		lipgloss.NewStyle().Width(rightW).Render(right),
-	)
+	panels := lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
 
 	status := m.renderCommandBar(w)
 

@@ -18,7 +18,6 @@ type WorkflowPanel struct {
 	sub        Subscriber
 	dispatcher *Dispatcher
 
-	// Workflow-level info for the panel header.
 	wfID     string
 	wfStatus string
 }
@@ -91,75 +90,80 @@ func (p *WorkflowPanel) SetFocus(focused bool) {
 	p.focused = focused
 }
 
-// View renders the workflow tree in a manual box.
-func (p *WorkflowPanel) View(width int) string {
-	inner := width - 2 // visual space inside │ borders
+// View renders the workflow tree in a manual box, filling to height.
+func (p *WorkflowPanel) View(width, height int) string {
+	inner := width - 2
 	if inner < 20 {
 		inner = 20
 	}
 
 	var sb strings.Builder
-
 	labelStyle := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
 	keyStyle := lipgloss.NewStyle().Foreground(Gray)
 
-	// Top border: ┌─ WORKFLOW ──────────┐
+	// ┌─ WORKFLOW ─────────────┐
 	title := labelStyle.Render("WORKFLOW")
-	topLeft := "┌─ "
-	topRight := "┐"
-	titleLine := topLeft + title
-	pad := inner - lipgloss.Width(titleLine) - 1 // -1 for ┐
+	titleLine := "┌─ " + title
+	pad := inner - lipgloss.Width(titleLine) - 1
 	if pad < 1 {
 		pad = 1
 	}
-	sb.WriteString(titleLine + strings.Repeat("─", pad) + topRight + "\n")
+	sb.WriteString(titleLine + strings.Repeat("─", pad) + "┐\n")
 
-	// Task info: │ Task: wf-xxx      │
-	taskLabel := keyStyle.Render("Task:")
-	taskID := WhiteStyle.Render(p.wfID)
-	taskLine := "│ " + taskLabel + " " + taskID
-	taskPad := inner - lipgloss.Width(taskLine) + 1 // +1 to account for │ prefix
+	// │ Task: wf-xxx          │
+	taskLine := "│ " + keyStyle.Render("Task:") + " " + WhiteStyle.Render(p.wfID)
+	taskPad := inner - lipgloss.Width(taskLine) + 1
 	if taskPad < 1 {
 		taskPad = 1
 	}
 	sb.WriteString(taskLine + strings.Repeat(" ", taskPad) + "│\n")
 
-	// Status line: │ Status: ACTIVE  Nodes: 3/3 │
+	// │ Status: ACTIVE  Nodes: 0/3 │
 	completed, _ := p.countStatus()
-	statusText := fmt.Sprintf("Status: %s       Nodes: %d/%d",
-		p.wfStatus, completed, len(p.nodes))
+	statusText := fmt.Sprintf("Status: %s       Nodes: %d/%d", p.wfStatus, completed, len(p.nodes))
 	statusLine := "│ " + statusText
-	statusPad := inner - len(statusText) // plain ASCII, no ANSI
+	statusPad := inner - len(statusText)
 	if statusPad < 1 {
 		statusPad = 1
 	}
 	sb.WriteString(statusLine + strings.Repeat(" ", statusPad) + "│\n")
 
-	// Separator: ├──────────────────────┤
+	// ├────────────────────────┤
 	sb.WriteString("├" + strings.Repeat("─", inner) + "┤\n")
-	// Blank spacer.
 	sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
 
 	if len(p.nodes) == 0 {
-		sb.WriteString("│" + GrayStyle.Render("  no nodes yet...") +
-			strings.Repeat(" ", inner-16) + "│\n")
+		sb.WriteString("│" + GrayStyle.Render("  no nodes yet...") + strings.Repeat(" ", inner-16) + "│\n")
 	} else {
 		for _, n := range p.nodes {
 			if len(n.DependsOn) == 0 {
 				p.renderNode(&sb, n, inner)
 			}
 		}
-		sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
 	}
 
-	// Bottom border.
+	// Pad to height.
+	lineCount := strings.Count(sb.String(), "\n")
+	for lineCount < height-1 {
+		sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
+		lineCount++
+	}
 	sb.WriteString("└" + strings.Repeat("─", inner) + "┘")
 
 	return sb.String()
 }
 
-// displayStatus maps internal status to user-facing label.
-// Nodes waiting on deps show "WAITING"; nodes blocked by a gate show "BLOCKED".
+// countStatus returns (completed, total) nodes for the progress bar.
+func (p *WorkflowPanel) countStatus() (int, int) {
+	completed := 0
+	for _, n := range p.nodes {
+		if n.Status == "COMPLETED" {
+			completed++
+		}
+	}
+	return completed, len(p.nodes)
+}
+
 func displayStatus(n *arlov1.NodeState) string {
 	if n.Status == "PENDING" || n.Status == "WAITING" {
 		if n.Gate != "" && n.Gate != "none" {
@@ -170,13 +174,12 @@ func displayStatus(n *arlov1.NodeState) string {
 	return n.Status
 }
 
-// renderNode renders a single node and its subtree in dependency order.
 func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inner int) {
 	icon := StatusIcon(n.Status)
 	label := displayStatus(n)
 	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
 
-	// Main line: │ ▶ analyze              RUNNING │
+	// Main line.
 	prefix := icon + " " + n.NodeId
 	styledLabel := statusStyle.Render(label)
 	gap := inner - lipgloss.Width(prefix) - lipgloss.Width(styledLabel) - 1
@@ -185,7 +188,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inn
 	}
 	sb.WriteString("│ " + prefix + strings.Repeat(" ", gap) + styledLabel + " │\n")
 
-	// Sub-lines with details.
+	// Sub-lines.
 	if n.SessionId != "" {
 		sub := GrayStyle.Render("sess:" + n.SessionId)
 		subGap := inner - lipgloss.Width(sub) - 1
@@ -211,12 +214,10 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inn
 		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
 	}
 
-	// Blank line between nodes.
 	if len(n.Children) == 0 || p.collapsed[n.NodeId] {
 		sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
 	}
 
-	// Render children at same level.
 	if !p.collapsed[n.NodeId] && len(n.Children) > 0 {
 		for _, childID := range n.Children {
 			for _, cn := range p.nodes {
@@ -229,24 +230,11 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inn
 	}
 }
 
-// isBlocked returns true if a node is in WAITING status due to a human approval gate.
 func isBlocked(n *arlov1.NodeState) bool {
 	return n.Gate != "" && n.Gate != "none" &&
 		(n.Status == "WAITING" || n.Status == "PENDING")
 }
 
-// countStatus returns (completed, total) nodes for the progress bar.
-func (p *WorkflowPanel) countStatus() (int, int) {
-	completed := 0
-	for _, n := range p.nodes {
-		if n.Status == "COMPLETED" {
-			completed++
-		}
-	}
-	return completed, len(p.nodes)
-}
-
-// flatIndex finds the flat visual index of a node for selection tracking.
 func (p *WorkflowPanel) flatIndex(target *arlov1.NodeState) int {
 	idx := 0
 	var walk func(n *arlov1.NodeState) bool
@@ -279,8 +267,6 @@ func (p *WorkflowPanel) flatIndex(target *arlov1.NodeState) int {
 	return idx
 }
 
-// GetSelectedNode returns the node ID of the currently selected node
-// based on the visual flat index.
 func (p *WorkflowPanel) GetSelectedNode() string {
 	idx := -1
 	var result string
