@@ -30,7 +30,6 @@ func NewWorkflowPanel(dispatcher *Dispatcher) *WorkflowPanel {
 	}
 }
 
-// Init subscribes to the dispatcher.
 func (p *WorkflowPanel) Init() tea.Cmd {
 	p.sub = p.dispatcher.Subscribe()
 	return p.listenDispatcher
@@ -41,7 +40,6 @@ func (p *WorkflowPanel) listenDispatcher() tea.Msg {
 	return event
 }
 
-// Update handles messages and dispatcher events.
 func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case WorkflowUpdatedEvent:
@@ -49,7 +47,6 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 		p.wfID = msg.WorkflowID
 		p.wfStatus = msg.Status
 		return nil, true
-
 	case tea.KeyMsg:
 		if !p.focused {
 			return nil, false
@@ -73,71 +70,52 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			}
 		case "enter":
 			return nil, true
-		default:
-			return nil, false
 		}
 		return nil, true
-
 	case InternalEvent:
 		return p.listenDispatcher, true
 	}
-
 	return nil, false
 }
 
-// SetFocus sets keyboard focus on this panel.
-func (p *WorkflowPanel) SetFocus(focused bool) {
-	p.focused = focused
-}
+func (p *WorkflowPanel) SetFocus(focused bool) { p.focused = focused }
 
-// View renders the workflow tree in a manual box, filling to height.
+// View renders the workflow box. Every line is padded to exactly `width` visible chars.
 func (p *WorkflowPanel) View(width, height int) string {
-	inner := width - 2
-	if inner < 20 {
-		inner = 20
+	w := width
+	if w < 30 {
+		w = 30
 	}
+	contentW := w - 2 // space between │ borders
 
 	var sb strings.Builder
-	labelStyle := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(Gray)
+	cyan := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
+	gray := lipgloss.NewStyle().Foreground(Gray)
 
-	// ┌─ WORKFLOW ─────────────┐
-	title := labelStyle.Render("WORKFLOW")
-	titleLine := "┌─ " + title
-	pad := inner - lipgloss.Width(titleLine) - 1
-	if pad < 1 {
-		pad = 1
-	}
-	sb.WriteString(titleLine + strings.Repeat("─", pad) + "┐\n")
+	// ┌─ WORKFLOW ──────────────────┐
+	sb.WriteString(boxLine("┌─ "+cyan.Render("WORKFLOW"), "─", "┐", w))
 
-	// │ Task: wf-xxx          │
-	taskLine := "│ " + keyStyle.Render("Task:") + " " + WhiteStyle.Render(p.wfID)
-	taskPad := inner - lipgloss.Width(taskLine) + 1
-	if taskPad < 1 {
-		taskPad = 1
-	}
-	sb.WriteString(taskLine + strings.Repeat(" ", taskPad) + "│\n")
+	// │ Task: wf-xxx               │
+	sb.WriteString(boxLine("│ "+gray.Render("Task:")+" "+WhiteStyle.Render(p.wfID), " ", "│", w))
 
 	// │ Status: ACTIVE  Nodes: 0/3 │
 	completed, _ := p.countStatus()
-	statusText := fmt.Sprintf("Status: %s       Nodes: %d/%d", p.wfStatus, completed, len(p.nodes))
-	statusLine := "│ " + statusText
-	statusPad := inner - len(statusText)
-	if statusPad < 1 {
-		statusPad = 1
-	}
-	sb.WriteString(statusLine + strings.Repeat(" ", statusPad) + "│\n")
+	status := fmt.Sprintf("Status: %s       Nodes: %d/%d", p.wfStatus, completed, len(p.nodes))
+	sb.WriteString(boxLine("│ "+status, " ", "│", w))
 
-	// ├────────────────────────┤
-	sb.WriteString("├" + strings.Repeat("─", inner) + "┤\n")
-	sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
+	// ├────────────────────────────┤
+	sb.WriteString(boxLine("├", "─", "┤", w))
 
+	// Blank line.
+	sb.WriteString(boxLine("│", " ", "│", w))
+
+	// Nodes.
 	if len(p.nodes) == 0 {
-		sb.WriteString("│" + GrayStyle.Render("  no nodes yet...") + strings.Repeat(" ", inner-16) + "│\n")
+		sb.WriteString(boxLine("│ "+GrayStyle.Render("no nodes yet..."), " ", "│", w))
 	} else {
 		for _, n := range p.nodes {
 			if len(n.DependsOn) == 0 {
-				p.renderNode(&sb, n, inner)
+				p.renderNode(&sb, n, w, contentW)
 			}
 		}
 	}
@@ -145,15 +123,25 @@ func (p *WorkflowPanel) View(width, height int) string {
 	// Pad to height.
 	lineCount := strings.Count(sb.String(), "\n")
 	for lineCount < height-1 {
-		sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
+		sb.WriteString(boxLine("│", " ", "│", w))
 		lineCount++
 	}
-	sb.WriteString("└" + strings.Repeat("─", inner) + "┘")
+	sb.WriteString("└" + strings.Repeat("─", w-2) + "┘")
 
 	return sb.String()
 }
 
-// countStatus returns (completed, total) nodes for the progress bar.
+// boxLine builds a line padded to exactly `targetW` visible characters.
+// left is the prefix (already styled), fill is the padding char, right is the suffix.
+func boxLine(left, fill, right string, targetW int) string {
+	visibleW := lipgloss.Width(left) + lipgloss.Width(right)
+	pad := targetW - visibleW
+	if pad < 0 {
+		pad = 0
+	}
+	return left + strings.Repeat(fill, pad) + right + "\n"
+}
+
 func (p *WorkflowPanel) countStatus() (int, int) {
 	completed := 0
 	for _, n := range p.nodes {
@@ -174,60 +162,50 @@ func displayStatus(n *arlov1.NodeState) string {
 	return n.Status
 }
 
-func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inner int) {
+func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, contentW int) {
 	icon := StatusIcon(n.Status)
 	label := displayStatus(n)
 	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
-
-	// Main line.
-	prefix := icon + " " + n.NodeId
 	styledLabel := statusStyle.Render(label)
-	gap := inner - lipgloss.Width(prefix) - lipgloss.Width(styledLabel) - 1
-	if gap < 1 {
-		gap = 1
-	}
-	sb.WriteString("│ " + prefix + strings.Repeat(" ", gap) + styledLabel + " │\n")
+
+	// │ ▶ analyze              RUNNING │
+	sb.WriteString(boxLine("│ "+icon+" "+n.NodeId+gapTo(styledLabel, contentW-lipgloss.Width(icon+" "+n.NodeId)-1)+styledLabel, " ", "│", w))
 
 	// Sub-lines.
 	if n.SessionId != "" {
-		sub := GrayStyle.Render("sess:" + n.SessionId)
-		subGap := inner - lipgloss.Width(sub) - 1
-		if subGap < 1 {
-			subGap = 1
-		}
-		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
+		sb.WriteString(boxLine("│   "+GrayStyle.Render("sess:"+n.SessionId), " ", "│", w))
 	}
 	if n.RetryCount > 0 {
-		sub := YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount))
-		subGap := inner - lipgloss.Width(sub) - 1
-		if subGap < 1 {
-			subGap = 1
-		}
-		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
+		sb.WriteString(boxLine("│   "+YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount)), " ", "│", w))
 	}
 	if isBlocked(n) {
-		sub := PurpleStyle.Render("gate: human_approval")
-		subGap := inner - lipgloss.Width(sub) - 1
-		if subGap < 1 {
-			subGap = 1
-		}
-		sb.WriteString("│   " + sub + strings.Repeat(" ", subGap) + " │\n")
+		sb.WriteString(boxLine("│   "+PurpleStyle.Render("gate: human_approval"), " ", "│", w))
 	}
-
+	// Blank separator.
 	if len(n.Children) == 0 || p.collapsed[n.NodeId] {
-		sb.WriteString("│" + strings.Repeat(" ", inner) + "│\n")
+		sb.WriteString(boxLine("│", " ", "│", w))
 	}
 
 	if !p.collapsed[n.NodeId] && len(n.Children) > 0 {
 		for _, childID := range n.Children {
 			for _, cn := range p.nodes {
 				if cn.NodeId == childID {
-					p.renderNode(sb, cn, inner)
+					p.renderNode(sb, cn, w, contentW)
 					break
 				}
 			}
 		}
 	}
+}
+
+// gapTo returns a string of spaces that, when placed before `target`, makes the
+// combined visual width equal to `totalW`.
+func gapTo(target string, totalW int) string {
+	n := totalW - lipgloss.Width(target)
+	if n < 0 {
+		n = 0
+	}
+	return strings.Repeat(" ", n)
 }
 
 func isBlocked(n *arlov1.NodeState) bool {
