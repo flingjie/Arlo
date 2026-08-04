@@ -478,10 +478,24 @@ func (m *Model) renderCommandBar(width int) string {
 		return StatusBarStyle.Width(width).Render(WhiteStyle.Render(msg))
 	}
 
-	// NORMAL mode commands.
-	cmds := []string{":a", ":ap", ":rj", ":f", ":rf", ":h", ":q"}
-	cmdText := strings.Join(cmds, " ")
-	return StatusBarStyle.Width(width).Render(GrayStyle.Render(cmdText))
+	// Show focus hint + available commands.
+	mode := ""
+	switch m.ui.Focus {
+	case FocusWorkflow:
+		mode = GrayStyle.Render("NORMAL") + " " + WhiteStyle.Render("workflow")
+	case FocusTimeline:
+		mode = GrayStyle.Render("NORMAL") + " " + WhiteStyle.Render("timeline")
+	case FocusInspector:
+		mode = GrayStyle.Render("NORMAL") + " " + WhiteStyle.Render("inspector")
+	}
+
+	cmds := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :f[ilter] :h[elp] :q[uit]")
+
+	pad := width - lipgloss.Width(mode) - lipgloss.Width(cmds) - 1
+	if pad < 1 {
+		pad = 1
+	}
+	return StatusBarStyle.Width(width).Render(mode + strings.Repeat(" ", pad) + cmds)
 }
 
 func (m *Model) renderFilterOverlay() string {
