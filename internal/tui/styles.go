@@ -103,6 +103,40 @@ func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
 	}
 }
 
+// displayStatus maps internal status to user-facing label.
+// PENDING appears as "WAITING" since the node is waiting for its dependencies.
+func displayStatus(status string) string {
+	switch status {
+	case "PENDING":
+		return "WAITING"
+	case "READY":
+		return "READY"
+	default:
+		return status
+	}
+}
+
+// statusTextStyle returns the style for the status label on the right side.
+func statusTextStyle(status string, isSelected bool) lipgloss.Style {
+	if isSelected {
+		return SelectedStyle
+	}
+	switch status {
+	case "RUNNING", "STARTING":
+		return YellowStyle.Bold(true)
+	case "COMPLETED":
+		return GreenStyle
+	case "FAILED", "CANCELLED":
+		return RedStyle
+	case "WAITING":
+		return PurpleStyle
+	case "READY":
+		return CyanStyle
+	default: // PENDING → WAITING
+		return GrayStyle
+	}
+}
+
 // ProgressBar renders a progress bar.
 func ProgressBar(completed, total int, width int) string {
 	if total == 0 {

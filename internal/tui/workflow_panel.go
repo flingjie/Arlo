@@ -3,10 +3,10 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // WorkflowPanel renders the workflow node tree.
@@ -89,17 +89,12 @@ func (p *WorkflowPanel) SetFocus(focused bool) {
 func (p *WorkflowPanel) View(width int) string {
 	var sb strings.Builder
 
-	// Header with progress and status counts.
-	done, failed, total := p.countTerminal()
-	sb.WriteString(HeaderStyle.Render("WORKFLOW"))
-	sb.WriteString("  ")
-	sb.WriteString(GrayStyle.Render(fmt.Sprintf("%d/%d", done, total)))
-	if failed > 0 {
-		sb.WriteString("  ")
-		sb.WriteString(RedStyle.Render(fmt.Sprintf("✗%d", failed)))
-	}
+	// Header.
+	completed, _ := p.countStatus()
+	total := len(p.nodes)
+	sb.WriteString(HeaderStyle.Render(fmt.Sprintf("WORKFLOW   %d/%d", completed, total)))
 	sb.WriteString("\n")
-	sb.WriteString(ProgressBar(done, total, width-2))
+	sb.WriteString(ProgressBar(completed, total, width-2))
 	sb.WriteString("\n\n")
 
 	if len(p.nodes) == 0 {
@@ -110,7 +105,7 @@ func (p *WorkflowPanel) View(width int) string {
 	// Roots: nodes with no dependencies.
 	for _, n := range p.nodes {
 		if len(n.DependsOn) == 0 {
-			p.renderNode(&sb, n)
+			p.renderNode(&sb, n, width)
 		}
 	}
 
@@ -119,27 +114,30 @@ func (p *WorkflowPanel) View(width int) string {
 
 // renderNode renders a single node and its subtree in dependency order.
 // Children are rendered at the same visual level — no indentation.
-func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState) {
+func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, width int) {
 	icon := StatusIcon(n.Status)
+	label := displayStatus(n.Status)
+	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
 
-	dur := formatNodeDuration(n)
-	if dur != "" {
-		if n.Status == "RUNNING" {
-			dur = "  " + WhiteStyle.Render(dur)
-		} else {
-			dur = "  " + GrayStyle.Render(dur)
-		}
+	// Pad the name so status text aligns roughly.
+	namePart := fmt.Sprintf("%s %s", icon, n.NodeId)
+	nameWidth := lipgloss.Width(namePart)
+	statusWidth := lipgloss.Width(statusStyle.Render(label))
+	gap := width - nameWidth - statusWidth - 10 // 10 for panel border + padding
+	if gap < 1 {
+		gap = 1
 	}
 
-	isSelected := p.focused && p.selected == p.flatIndex(n)
-	lineStyle := nodeLineStyle(n.Status, isSelected)
+	sb.WriteString(fmt.Sprintf("%s%s%s\n",
+		namePart,
+		strings.Repeat(" ", gap),
+		statusStyle.Render(label),
+	))
 
-	sb.WriteString(fmt.Sprintf("%s %s%s\n",
-		icon, lineStyle.Render(n.NodeId), dur))
-
-	meta := formatMeta(n)
-	if meta != "" {
-		sb.WriteString(fmt.Sprintf("   %s\n", GrayStyle.Render(meta)))
+	// Show gate info on a sub-line.
+	if n.Gate != "" && n.Gate != "none" {
+		sb.WriteString(fmt.Sprintf("   %s\n",
+			GrayStyle.Render(fmt.Sprintf("gate:%s", n.Gate))))
 	}
 
 	// Render children at same level.
@@ -147,7 +145,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState) {
 		for _, childID := range n.Children {
 			for _, cn := range p.nodes {
 				if cn.NodeId == childID {
-					p.renderNode(sb, cn)
+					p.renderNode(sb, cn, width)
 					break
 				}
 			}
@@ -155,20 +153,15 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState) {
 	}
 }
 
-// countTerminal returns (done, failed, total) where done includes all terminal
-// states (COMPLETED, FAILED, CANCELLED). Used for the progress bar and header.
-func (p *WorkflowPanel) countTerminal() (int, int, int) {
-	done, failed := 0, 0
+// countStatus returns (completed, total) nodes for the progress bar.
+func (p *WorkflowPanel) countStatus() (int, int) {
+	completed := 0
 	for _, n := range p.nodes {
-		switch n.Status {
-		case "COMPLETED":
-			done++
-		case "FAILED", "CANCELLED":
-			done++
-			failed++
+		if n.Status == "COMPLETED" {
+			completed++
 		}
 	}
-	return done, failed, len(p.nodes)
+	return completed, len(p.nodes)
 }
 
 // flatIndex finds the flat visual index of a node for selection tracking.
@@ -210,58 +203,4 @@ func (p *WorkflowPanel) GetSelectedNode() string {
 		return p.nodes[p.selected].NodeId
 	}
 	return ""
-}
-
-// ── Helpers ──────────────────────────────────────
-
-func formatMeta(n *arlov1.NodeState) string {
-	parts := []string{}
-	if n.RetryCount > 0 {
-		parts = append(parts, fmt.Sprintf("retry:%d", n.RetryCount))
-	}
-	if n.Gate != "" && n.Gate != "none" {
-		parts = append(parts, fmt.Sprintf("gate:%s", n.Gate))
-	}
-	if n.SessionId != "" {
-		parts = append(parts, n.SessionId)
-	}
-	return strings.Join(parts, "  ")
-}
-
-func formatNodeDuration(n *arlov1.NodeState) string {
-	if n.StartedAt == "" {
-		return ""
-	}
-	start, err := time.Parse(time.RFC3339, n.StartedAt)
-	if err != nil {
-		return ""
-	}
-
-	var end time.Time
-	if n.CompletedAt != "" {
-		end, err = time.Parse(time.RFC3339, n.CompletedAt)
-		if err != nil {
-			return ""
-		}
-	} else {
-		end = time.Now()
-	}
-
-	d := end.Sub(start)
-	if d < time.Second {
-		return ""
-	}
-
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	case d < time.Hour:
-		m := int(d.Minutes())
-		s := int(d.Seconds()) % 60
-		return fmt.Sprintf("%dm%ds", m, s)
-	default:
-		h := int(d.Hours())
-		m := int(d.Minutes()) % 60
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
 }
