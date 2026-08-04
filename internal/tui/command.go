@@ -41,6 +41,7 @@ func NewCommandRegistry() *CommandRegistry {
 	r.Register(&AttachCommand{})
 	r.Register(&ApproveCommand{})
 	r.Register(&RejectCommand{})
+	r.Register(&RetryCommand{})
 	return r
 }
 
@@ -103,6 +104,9 @@ func (c *HelpCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
 			"  :filter, :f      Toggle event filter",
 			"  :refresh, :rf    Reconnect stream and fetch snapshot",
 			"  :attach, :a      Attach to a node's session (usage: :attach <node-id>)",
+			"  :approve, :ap    Approve a gated node (usage: :approve [<node-id>])",
+			"  :reject, :rj     Reject a gated node (usage: :reject [<node-id>])",
+			"  :retry           Retry a failed/cancelled node (usage: :retry [<node-id>])",
 		}
 		return commandMsg{output: strings.Join(lines, "\n")}
 	}
@@ -206,6 +210,26 @@ func (c *RejectCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
 	return tea.Batch(
 		ctx.Client.ExecuteCommand("reject", nodeID, ""),
 		func() tea.Msg { return commandMsg{output: fmt.Sprintf("rejecting node %s...", nodeID)} },
+	)
+}
+
+// ── RetryCommand ──────────────────────────────────
+
+type RetryCommand struct{}
+
+func (c *RetryCommand) Name() string        { return "retry" }
+func (c *RetryCommand) Aliases() []string   { return nil }
+func (c *RetryCommand) Description() string { return "Retry a failed or cancelled node" }
+func (c *RetryCommand) Usage() string       { return ":retry [<node-id>]" }
+
+func (c *RetryCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
+	nodeID := resolveNodeID(args, ctx)
+	if nodeID == "" {
+		return func() tea.Msg { return commandMsg{output: "no node selected; usage: :retry <node-id>"} }
+	}
+	return tea.Batch(
+		ctx.Client.ExecuteCommand("retry", nodeID, ""),
+		func() tea.Msg { return commandMsg{output: fmt.Sprintf("retrying node %s...", nodeID)} },
 	)
 }
 

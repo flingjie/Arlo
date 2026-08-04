@@ -173,7 +173,7 @@ message SendPTYInputResponse {}
 // ── Command ────────────────────────────────────
 
 message CommandRequest {
-  string command = 1;   // "approve", "reject", "cancel_task"
+  string command = 1;   // "approve", "reject", "cancel_task", "retry", "annotate"
   string target = 2;    // node_id or task_id
   string input = 3;     // optional human input
 }

@@ -408,6 +408,40 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 		s.stateStore.Rebuild(ctx)
 		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("annotated node %s: %s=%s", nodeID, key, val)}, nil
 
+	case "retry":
+		// Manually retry a failed/cancelled node.
+		nodeID := req.Target
+		ns, nsErr := s.stateStore.GetNodeState(ctx, nodeID)
+		if nsErr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: fmt.Sprintf("node %s not found: %v", nodeID, nsErr)}, nil
+		}
+		if ns.Status != domain.NodeStatusFailed && ns.Status != domain.NodeStatusCancelled {
+			return &arlov1.CommandResponse{Success: false, Message: fmt.Sprintf("node %s is %s, can only retry FAILED or CANCELLED nodes", nodeID, ns.Status)}, nil
+		}
+
+		// Emit NODE_FAILED with Retryable=true so the projection
+		// transitions the node to READY and increments retry_count.
+		// The reconciler tick will then pick it up via DecisionRetryNode.
+		_, rerr := s.eventStore.Append(ctx, "node-"+nodeID, []store.Event{{
+			ID:   fmt.Sprintf("evt-retry-%d", time.Now().UnixNano()),
+			Type: store.EventNodeFailed,
+			Payload: marshalJSON(domain.NodeFailed{
+				NodeID:     nodeID,
+				WorkflowID: ns.WorkflowID,
+				SessionID:  ns.SessionID,
+				Reason:     "manual retry by user",
+				Retryable:  true,
+			}),
+		}})
+		if rerr != nil {
+			return &arlov1.CommandResponse{Success: false, Message: rerr.Error()}, nil
+		}
+		s.stateStore.Rebuild(ctx)
+		if wfID := ns.WorkflowID; wfID != "" {
+			s.reconciler.Reconcile(ctx, wfID)
+		}
+		return &arlov1.CommandResponse{Success: true, Message: fmt.Sprintf("node %s retrying", nodeID)}, nil
+
 	default:
 		return &arlov1.CommandResponse{Success: false, Message: "unknown command: " + req.Command}, nil
 	}

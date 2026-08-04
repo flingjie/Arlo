@@ -56,7 +56,7 @@ func New(socket, workflow string) *Model {
 		},
 		workflowPanel:  NewWorkflowPanel(d),
 		timelinePanel:  NewTimelinePanel(d),
-		inspectorPanel: NewInspectorPanel(),
+		inspectorPanel: NewInspectorPanel(d),
 		seenEvents:     make(map[string]bool),
 	}
 }
@@ -66,6 +66,7 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.connectAndStart,
 		m.workflowPanel.Init(),
+		m.inspectorPanel.Init(),
 		m.timelinePanel.Init(),
 	)
 }
@@ -301,21 +302,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Always route dispatcher events to all panels.
-	switch msg.(type) {
-	case InternalEvent:
-		cmd, _ := m.workflowPanel.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		// Always route dispatcher events to all panels.
+		switch msg.(type) {
+		case InternalEvent:
+			cmd, _ := m.workflowPanel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			cmd, _ = m.timelinePanel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			cmd, _ = m.inspectorPanel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
-		cmd, _ = m.timelinePanel.Update(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
 
-	return m, tea.Batch(cmds...)
+		return m, tea.Batch(cmds...)
+
 }
+
 
 // syncInspectorToSelection updates the inspector with the currently selected node.
 func (m *Model) syncInspectorToSelection() {
@@ -489,7 +496,7 @@ func (m *Model) renderCommandBar(width int) string {
 		mode = GrayStyle.Render("NORMAL") + " " + WhiteStyle.Render("inspector")
 	}
 
-	cmds := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :f[ilter] :h[elp] :q[uit]")
+	cmds := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :retry :f[ilter] :h[elp] :q[uit]")
 
 	pad := width - lipgloss.Width(mode) - lipgloss.Width(cmds) - 1
 	if pad < 1 {
