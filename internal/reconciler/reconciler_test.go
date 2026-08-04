@@ -32,7 +32,7 @@ func newTestReconciler(t *testing.T) (*Reconciler, *store.SQLiteStore, *state.In
 
 	ss := state.NewInMemoryStateStore(es)
 	eng := workflow.NewEngine()
-	r := New(ss, es, eng, nil, nil).WithTickInterval(100 * time.Millisecond)
+	r := New(ss, es, eng, nil, nil, nil).WithTickInterval(100 * time.Millisecond)
 
 	return r, es, ss, eng
 }
@@ -384,7 +384,7 @@ func TestReconcileRetryableFailure(t *testing.T) {
 // TestReconcilerStartStop verifies the Start/Stop lifecycle.
 func TestReconcilerStartStop(t *testing.T) {
 	_, es, ss, eng := newTestReconciler(t)
-	r := New(ss, es, eng, nil, nil).WithTickInterval(50 * time.Millisecond)
+	r := New(ss, es, eng, nil, nil, nil).WithTickInterval(50 * time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -643,7 +643,7 @@ func TestReconcileRetryNode(t *testing.T) {
 func TestReconcileWithAnnotations(t *testing.T) {
 	ctx := context.Background()
 	_, es, ss, eng := newTestReconciler(t)
-	r := New(ss, es, eng, nil, nil)
+	r := New(ss, es, eng, nil, nil, nil)
 
 	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
 
@@ -677,7 +677,7 @@ func TestReconcileWithAnnotations(t *testing.T) {
 func TestReconcileMetricsFlow(t *testing.T) {
 	ctx := context.Background()
 	_, es, ss, eng := newTestReconciler(t)
-	r := New(ss, es, eng, nil, nil)
+	r := New(ss, es, eng, nil, nil, nil)
 
 	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
 

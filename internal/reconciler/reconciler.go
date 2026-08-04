@@ -23,6 +23,7 @@ import (
 
 	"github.com/lingjiefan/arlo/internal/domain"
 	"github.com/lingjiefan/arlo/internal/runtime"
+	"github.com/lingjiefan/arlo/internal/skill"
 	"github.com/lingjiefan/arlo/internal/state"
 	"github.com/lingjiefan/arlo/internal/store"
 	"github.com/lingjiefan/arlo/internal/workflow"
@@ -31,15 +32,14 @@ import (
 
 // Reconciler is the control loop that drives the system toward desired state.
 type Reconciler struct {
-	stateStore  state.StateStore
-	eventStore  store.EventStore
-	engine      *workflow.Engine
-		runtimeMgr   *runtime.Manager
-		workspaceMgr *workspace.Manager
-
+	stateStore    state.StateStore
+	eventStore    store.EventStore
+	engine        *workflow.Engine
+	runtimeMgr    *runtime.Manager
+	workspaceMgr  *workspace.Manager
+	skillRegistry *skill.Registry
 
 	// graphRegistry maps workflowID → compiled graph.
-	// The Reconciler needs both state and graph to evaluate.
 	graphRegistry map[string]*domain.ExecutableGraph
 
 	tickInterval time.Duration
@@ -52,6 +52,7 @@ func New(
 	engine *workflow.Engine,
 	runtimeMgr *runtime.Manager,
 	workspaceMgr *workspace.Manager,
+	skillRegistry *skill.Registry,
 ) *Reconciler {
 	return &Reconciler{
 		stateStore:    stateStore,
@@ -59,6 +60,7 @@ func New(
 		engine:        engine,
 		runtimeMgr:    runtimeMgr,
 		workspaceMgr:  workspaceMgr,
+		skillRegistry: skillRegistry,
 		graphRegistry: make(map[string]*domain.ExecutableGraph),
 		tickInterval:  5 * time.Second,
 	}
@@ -171,12 +173,27 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		}
 
 		success := inst.ExitCode == 0
-		slog.Info("runtime exited, emitting completion",
+		slog.Info("runtime exited",
 			"workflow", workflowID,
 			"node", ns.NodeID,
 			"exit_code", inst.ExitCode,
-			"success", success,
+			"tokens_in", inst.Metrics.TokensIn,
+			"tokens_out", inst.Metrics.TokensOut,
+			"tool_calls", inst.Metrics.ToolCalls,
+			"duration_ms", inst.Metrics.DurationMs,
 		)
+
+		// Emit metrics snapshot.
+		r.emitNodeEvent(ctx, workflowID, ns, store.EventMetricsSnapshot,
+			domain.MetricsSnapshot{
+				NodeID:     ns.NodeID,
+				WorkflowID: workflowID,
+				SessionID:  ns.SessionID,
+				TokensIn:   inst.Metrics.TokensIn,
+				TokensOut:  inst.Metrics.TokensOut,
+				ToolCalls:  inst.Metrics.ToolCalls,
+				DurationMs: inst.Metrics.DurationMs,
+			})
 
 		if success {
 			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeCompleted,
@@ -449,13 +466,20 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 		"reason", d.Reason,
 	)
 
-	// Actually launch the agent runtime (v0.2).
+	// Actually launch the agent runtime.
 	if r.runtimeMgr != nil {
 		graph := r.graphRegistry[workflowID]
 		if graph != nil {
-			// Find the node in the graph to get runtime config.
 			for _, n := range graph.Nodes {
 				if n.ID == d.NodeID {
+					// Resolve the skill to get the actual prompt.
+					prompt := "Run skill: " + n.SkillRef.Name
+					if r.skillRegistry != nil {
+						if sk, err := r.skillRegistry.Resolve(n.SkillRef); err == nil && sk.Prompt != "" {
+							prompt = sk.Prompt
+						}
+					}
+
 					_, err := r.runtimeMgr.StartInstance(ctx, runtime.RuntimeSpec{
 						InstanceID:  fmt.Sprintf("rt-%s-%d", d.NodeID, ns.RetryCount+1),
 						Type:        n.Runtime.Provider,
@@ -465,7 +489,7 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 						},
 						SessionID: sessionID,
 						WorkDir:    "/tmp",
-						Prompt:     "Run skill: " + n.SkillRef.Name,
+						Prompt:     prompt,
 					})
 					if err != nil {
 						slog.Warn("failed to launch runtime", "node", d.NodeID, "error", err)

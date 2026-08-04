@@ -34,6 +34,7 @@ type RuntimeInstance struct {
 	Prompt      string          `json:"prompt"`
 	State       RuntimeState    `json:"state"`
 	ExitCode    int             `json:"exit_code,omitempty"`
+	Metrics     RuntimeMetrics  `json:"metrics,omitempty"`
 }
 
 // RuntimeConfig configures how an agent runtime behaves.

@@ -2,12 +2,14 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
 )
@@ -22,9 +24,11 @@ type ClaudeAdapter struct {
 
 // claudeInstance tracks a running Claude process.
 type claudeInstance struct {
-	inst domain.RuntimeInstance
-	cmd  *exec.Cmd
-	pty  *os.File // PTY master
+	inst     domain.RuntimeInstance
+	cmd      *exec.Cmd
+	pty      *os.File // PTY master
+	stdout   *bytes.Buffer
+	stderr   *bytes.Buffer
 }
 
 // NewClaudeAdapter creates a new Claude Code adapter.
@@ -92,9 +96,14 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 		io.WriteString(stdin, inst.Prompt)
 	}()
 
+	stdoutBuf := &bytes.Buffer{}
+	stderrBuf := &bytes.Buffer{}
+
 	ci := &claudeInstance{
-		inst: inst,
-		cmd:  cmd,
+		inst:   inst,
+		cmd:    cmd,
+		stdout: stdoutBuf,
+		stderr: stderrBuf,
 	}
 
 	a.mu.Lock()
@@ -103,9 +112,26 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 
 	// Monitor process exit in background.
 	go func() {
-		// Drain stdout/stderr.
-		go bufio.NewReader(stdout).WriteTo(io.Discard)
-		go bufio.NewReader(stderr).WriteTo(io.Discard)
+		start := time.Now()
+		var cum struct {
+			tokensIn, tokensOut int64
+			toolCalls           int
+		}
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			stdoutBuf.Write(line)
+			stdoutBuf.WriteByte('\n')
+
+			if event, ok := ParseStreamJSON(line); ok {
+				cum.tokensIn += event.TokensIn
+				cum.tokensOut += event.TokensOut
+				if event.ToolName != "" {
+					cum.toolCalls++
+				}
+			}
+		}
+		go io.Copy(stderrBuf, stderr)
 
 		err := cmd.Wait()
 
@@ -120,7 +146,12 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 
 		// Notify the Manager so the reconciler can detect the exit.
 		if a.mgr != nil {
-			a.mgr.MarkExited(inst.ID, exitCode)
+			a.mgr.MarkExited(inst.ID, exitCode, domain.RuntimeMetrics{
+				TokensIn:   cum.tokensIn,
+				TokensOut:  cum.tokensOut,
+				ToolCalls:  cum.toolCalls,
+				DurationMs: time.Since(start).Milliseconds(),
+			})
 		}
 	}()
 

@@ -29,6 +29,7 @@ import (
 	"github.com/lingjiefan/arlo/internal/reconciler"
 	"github.com/lingjiefan/arlo/internal/runtime"
 	"github.com/lingjiefan/arlo/internal/service"
+	"github.com/lingjiefan/arlo/internal/skill"
 	"github.com/lingjiefan/arlo/internal/state"
 	"github.com/lingjiefan/arlo/internal/store"
 	"github.com/lingjiefan/arlo/internal/workflow"
@@ -68,6 +69,14 @@ func main() {
 	// ── Step 4: Workflow Engine ──────────────────
 	eng := workflow.NewEngine()
 
+	// ── Step 4.5: Skill Registry ─────────────────
+	skillReg := skill.NewRegistry()
+	if err := skillReg.LoadDir(context.Background(), "skills"); err != nil {
+		slog.Warn("failed to load skills", "error", err)
+	} else {
+		slog.Info("skills loaded", "count", len(skillReg.List()))
+	}
+
 	// ── Step 6: Runtime & Workspace ──────────────
 	rtMgr := runtime.NewManager()
 	claudeAdapter := runtime.NewClaudeAdapter()
@@ -75,11 +84,10 @@ func main() {
 	rtMgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, claudeAdapter)
 
 	wsMgr := workspace.NewManager()
-	_ = wsMgr // workspace provider registered lazily on first use
-	// In production: wsMgr.RegisterProvider("tmux", workspace.NewTmuxProvider("arlo"))
+	_ = wsMgr
 
 	// ── Step 5: Reconciler ───────────────────────
-	rec := reconciler.New(ss, es, eng, rtMgr, wsMgr)
+	rec := reconciler.New(ss, es, eng, rtMgr, wsMgr, skillReg)
 
 	// ── gRPC Service ─────────────────────────────
 	svc := service.New(es, ss, eng, rec, rtMgr, wsMgr)
