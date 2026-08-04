@@ -225,10 +225,11 @@ policy:
 	}
 	t.Logf("Approved: %s", cmdResp.Message)
 
-	// Resume event stream to catch the rest.
+	// Resume event stream from where we left off to avoid duplicates.
+	lastPosition := events[len(events)-1].Position
 	stream2, err := client.SubscribeEvents(ctx, &arlov1.SubscribeEventsRequest{
 		WorkflowId:   wfID,
-		FromPosition: 0,
+		FromPosition: lastPosition + 1,
 	})
 	if err != nil {
 		t.Fatalf("re-SubscribeEvents: %v", err)
