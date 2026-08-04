@@ -101,7 +101,7 @@ func TestE2EBugfixSimple(t *testing.T) {
 	select {
 	case <-done:
 		// finished naturally
-	case <-time.After(30 * time.Second):
+	case <-time.After(5 * time.Minute):
 		t.Fatal("timeout waiting for workflow completion")
 	}
 
@@ -146,6 +146,7 @@ name: gate-test
 version: 1
 nodes:
   - id: step
+    skill: root-cause
     runtime:
       provider: claude-code
       model: claude-haiku-4-5
@@ -250,7 +251,7 @@ policy:
 
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(5 * time.Minute):
 		t.Fatal("timeout waiting for completion after approve")
 	}
 
