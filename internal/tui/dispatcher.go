@@ -28,9 +28,10 @@ func (EventAppendedEvent) internalEventMarker() {}
 
 // WorkflowUpdatedEvent is emitted after a snapshot reconciliation.
 type WorkflowUpdatedEvent struct {
-	Status  string
-	Version uint64
-	Nodes   []*arlov1.NodeState
+	WorkflowID string
+	Status     string
+	Version    uint64
+	Nodes      []*arlov1.NodeState
 }
 
 func (WorkflowUpdatedEvent) internalEventMarker() {}

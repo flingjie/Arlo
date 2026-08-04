@@ -103,19 +103,6 @@ func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
 	}
 }
 
-// displayStatus maps internal status to user-facing label.
-// PENDING appears as "WAITING" since the node is waiting for its dependencies.
-func displayStatus(status string) string {
-	switch status {
-	case "PENDING":
-		return "WAITING"
-	case "READY":
-		return "READY"
-	default:
-		return status
-	}
-}
-
 // statusTextStyle returns the style for the status label on the right side.
 func statusTextStyle(status string, isSelected bool) lipgloss.Style {
 	if isSelected {

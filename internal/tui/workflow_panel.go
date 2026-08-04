@@ -17,6 +17,10 @@ type WorkflowPanel struct {
 	focused    bool
 	sub        Subscriber
 	dispatcher *Dispatcher
+
+	// Workflow-level info for the panel header.
+	wfID     string
+	wfStatus string
 }
 
 // NewWorkflowPanel creates a new workflow panel.
@@ -43,6 +47,8 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case WorkflowUpdatedEvent:
 		p.nodes = msg.Nodes
+		p.wfID = msg.WorkflowID
+		p.wfStatus = msg.Status
 		return nil, true
 
 	case tea.KeyMsg:
@@ -85,59 +91,118 @@ func (p *WorkflowPanel) SetFocus(focused bool) {
 	p.focused = focused
 }
 
-// View renders the workflow tree.
+// View renders the workflow tree in a manual box.
 func (p *WorkflowPanel) View(width int) string {
+	inner := width - 2 // space inside borders
+	if inner < 10 {
+		inner = 10
+	}
+
 	var sb strings.Builder
 
-	// Header.
+	labelStyle := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(Gray)
+
+	// Top border with title.
+	sb.WriteString(fmt.Sprintf("┌─ %s %s┐\n",
+		labelStyle.Render("WORKFLOW"),
+		strings.Repeat("─", inner-10)))
+
+	// Task info line.
+	sb.WriteString(fmt.Sprintf("│ %s %s%s│\n",
+		keyStyle.Render("Task:"),
+		WhiteStyle.Render(p.wfID),
+		strings.Repeat(" ", inner-6-len(p.wfID))))
+
+	// Status line.
 	completed, _ := p.countStatus()
-	total := len(p.nodes)
-	sb.WriteString(HeaderStyle.Render(fmt.Sprintf("WORKFLOW   %d/%d", completed, total)))
-	sb.WriteString("\n")
-	sb.WriteString(ProgressBar(completed, total, width-2))
-	sb.WriteString("\n\n")
+	statusLine := fmt.Sprintf("Status: %s       Nodes: %d/%d",
+		p.wfStatus, completed, len(p.nodes))
+	sb.WriteString(fmt.Sprintf("│ %s%s│\n",
+		statusLine,
+		strings.Repeat(" ", inner-1-len(statusLine))))
+
+	// Separator.
+	sb.WriteString(fmt.Sprintf("├%s┤\n", strings.Repeat("─", inner)))
+
+	// Separator between header and nodes.
+	sb.WriteString(fmt.Sprintf("│%s│\n", strings.Repeat(" ", inner)))
 
 	if len(p.nodes) == 0 {
-		sb.WriteString(GrayStyle.Render("  no nodes yet...\n"))
-		return PanelStyle.Width(width).Render(sb.String())
-	}
-
-	// Roots: nodes with no dependencies.
-	for _, n := range p.nodes {
-		if len(n.DependsOn) == 0 {
-			p.renderNode(&sb, n, width)
+		sb.WriteString(fmt.Sprintf("│%s│\n",
+			GrayStyle.Render("  no nodes yet...")+
+				strings.Repeat(" ", inner-16)))
+	} else {
+		for _, n := range p.nodes {
+			if len(n.DependsOn) == 0 {
+				p.renderNode(&sb, n, inner)
+			}
 		}
+		// Fill remaining space.
+		sb.WriteString(fmt.Sprintf("│%s│\n", strings.Repeat(" ", inner)))
 	}
 
-	return PanelStyle.Width(width).Render(sb.String())
+	// Bottom border.
+	sb.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", inner)))
+
+	return sb.String()
+}
+
+// displayStatus maps internal status to user-facing label.
+// Nodes waiting on deps show "WAITING"; nodes blocked by a gate show "BLOCKED".
+func displayStatus(n *arlov1.NodeState) string {
+	if n.Status == "PENDING" || n.Status == "WAITING" {
+		if n.Gate != "" && n.Gate != "none" {
+			return "BLOCKED"
+		}
+		return "WAITING"
+	}
+	return n.Status
 }
 
 // renderNode renders a single node and its subtree in dependency order.
-// Children are rendered at the same visual level — no indentation.
-func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, width int) {
+func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, inner int) {
 	icon := StatusIcon(n.Status)
-	label := displayStatus(n.Status)
+	label := displayStatus(n)
 	statusStyle := statusTextStyle(n.Status, p.focused && p.selected == p.flatIndex(n))
 
-	// Pad the name so status text aligns roughly.
-	namePart := fmt.Sprintf("%s %s", icon, n.NodeId)
-	nameWidth := lipgloss.Width(namePart)
-	statusWidth := lipgloss.Width(statusStyle.Render(label))
-	gap := width - nameWidth - statusWidth - 10 // 10 for panel border + padding
+	// Build the main line: │ icon name              STATUS │
+	prefix := icon + " " + n.NodeId
+	gap := inner - lipgloss.Width(prefix) - lipgloss.Width(label) - 1
 	if gap < 1 {
 		gap = 1
 	}
-
-	sb.WriteString(fmt.Sprintf("%s%s%s\n",
-		namePart,
+	sb.WriteString(fmt.Sprintf("│ %s%s%s │\n",
+		prefix,
 		strings.Repeat(" ", gap),
 		statusStyle.Render(label),
 	))
 
-	// Show gate info on a sub-line.
-	if n.Gate != "" && n.Gate != "none" {
-		sb.WriteString(fmt.Sprintf("   %s\n",
-			GrayStyle.Render(fmt.Sprintf("gate:%s", n.Gate))))
+	// Sub-line: session ID for running nodes.
+	if n.Status == "RUNNING" && n.SessionId != "" {
+		sub := GrayStyle.Render(fmt.Sprintf("└─ %s", n.SessionId))
+		subGap := inner - lipgloss.Width(sub) - 1
+		if subGap < 1 {
+			subGap = 1
+		}
+		sb.WriteString(fmt.Sprintf("│   %s%s │\n",
+			sub, strings.Repeat(" ", subGap)))
+	}
+
+	// Sub-line: gate info for WAITING nodes.
+	if isBlocked(n) {
+		sub := PurpleStyle.Render(fmt.Sprintf("└─ gate: human_approval"))
+		subGap := inner - lipgloss.Width(sub) - 1
+		if subGap < 1 {
+			subGap = 1
+		}
+		sb.WriteString(fmt.Sprintf("│   %s%s │\n",
+			sub, strings.Repeat(" ", subGap)))
+	}
+
+	// Blank line between nodes.
+	if len(n.Children) == 0 || p.collapsed[n.NodeId] {
+		sb.WriteString(fmt.Sprintf("│%s│\n", strings.Repeat(" ", inner)))
 	}
 
 	// Render children at same level.
@@ -145,12 +210,18 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, wid
 		for _, childID := range n.Children {
 			for _, cn := range p.nodes {
 				if cn.NodeId == childID {
-					p.renderNode(sb, cn, width)
+					p.renderNode(sb, cn, inner)
 					break
 				}
 			}
 		}
 	}
+}
+
+// isBlocked returns true if a node is in WAITING status due to a human approval gate.
+func isBlocked(n *arlov1.NodeState) bool {
+	return n.Gate != "" && n.Gate != "none" &&
+		(n.Status == "WAITING" || n.Status == "PENDING")
 }
 
 // countStatus returns (completed, total) nodes for the progress bar.

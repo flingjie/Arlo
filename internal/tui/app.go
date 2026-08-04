@@ -221,9 +221,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.wf.StartedAt, _ = time.Parse(time.RFC3339, msg.startedAt)
 			}
 			m.dispatcher.Emit(WorkflowUpdatedEvent{
-				Status:  msg.status,
-				Version: msg.version,
-				Nodes:   msg.nodes,
+				WorkflowID: m.workflow,
+				Status:     msg.status,
+				Version:    msg.version,
+				Nodes:      msg.nodes,
 			})
 		}
 
