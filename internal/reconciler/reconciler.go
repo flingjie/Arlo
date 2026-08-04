@@ -87,8 +87,8 @@ func (r *Reconciler) Start(ctx context.Context) error {
 	ticker := time.NewTicker(r.tickInterval)
 	defer ticker.Stop()
 
-	// Reconcile immediately on startup.
-	r.reconcileAll(ctx)
+	// First reconcile is triggered by CreateTask, not here — avoids a
+	// race where both see PENDING and produce duplicate NODE_STARTED.
 
 	for {
 		select {
