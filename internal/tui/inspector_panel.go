@@ -165,79 +165,37 @@ func (p *InspectorPanel) View(width, height int) string {
 func (p *InspectorPanel) renderSummary(sb *strings.Builder) {
 	n := p.node
 
-	// ── Status ──
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Status"))
-	sb.WriteString(strings.Repeat("─", 40))
-	sb.WriteString("\n")
-
+	sectionHeader(sb, "Status", 40)
 	icon := StatusIcon(n.Status)
 	statusStyle := statusTextStyle(n.Status, false)
 	sb.WriteString(fmt.Sprintf("  %s  %s  %s\n", icon, WhiteStyle.Render(n.NodeId), statusStyle.Render(n.Status)))
 
 	if n.StartedAt != "" {
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Started"), WhiteStyle.Render(relativeTime(n.StartedAt))))
+		kvLine(sb, "Started", relativeTime(n.StartedAt), WhiteStyle)
 	}
 	if n.CompletedAt != "" {
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Completed"), WhiteStyle.Render(relativeTime(n.CompletedAt))))
+		kvLine(sb, "Completed", relativeTime(n.CompletedAt), WhiteStyle)
 	}
 	if n.RetryCount > 0 {
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Retries"), YellowStyle.Render(fmt.Sprintf("%d", n.RetryCount))))
+		kvLine(sb, "Retries", fmt.Sprintf("%d", n.RetryCount), YellowStyle)
 	}
 
 	sb.WriteString("\n")
 
-	// ── Configuration ──
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Configuration"))
-	sb.WriteString(strings.Repeat("─", 34))
-	sb.WriteString("\n")
-
-	gate := n.Gate
-	if gate == "" || gate == "none" {
-		gate = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Gate"), WhiteStyle.Render(gate)))
-
-	deps := strings.Join(n.DependsOn, ", ")
-	if deps == "" {
-		deps = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Depends On"), WhiteStyle.Render(deps)))
-
-	children := strings.Join(n.Children, ", ")
-	if children == "" {
-		children = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Children"), WhiteStyle.Render(children)))
+	sectionHeader(sb, "Configuration", 34)
+	kvLine(sb, "Gate", emptyDash(n.Gate, "none"), WhiteStyle)
+	kvLine(sb, "Depends On", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
+	kvLine(sb, "Children", emptyDash(strings.Join(n.Children, ", "), ""), WhiteStyle)
 
 	sb.WriteString("\n")
 
-	// ── Session ──
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Session"))
-	sb.WriteString(strings.Repeat("─", 38))
-	sb.WriteString("\n")
-
-	sess := n.SessionId
-	if sess == "" {
-		sess = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Session"), WhiteStyle.Render(sess)))
-
-	rt := n.RuntimeId
-	if rt == "" {
-		rt = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Runtime"), WhiteStyle.Render(rt)))
+	sectionHeader(sb, "Session", 38)
+	kvLine(sb, "Session", emptyDash(n.SessionId, ""), WhiteStyle)
+	kvLine(sb, "Runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
 
 	sb.WriteString("\n")
 
-	// ── Commands ──
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Commands"))
-	sb.WriteString(strings.Repeat("─", 36))
-	sb.WriteString("\n")
+	sectionHeader(sb, "Commands", 36)
 	sb.WriteString("  ")
 	sb.WriteString(GrayStyle.Render(":attach :approve :reject :retry :logs"))
 	sb.WriteString("\n")
@@ -348,7 +306,6 @@ func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
 func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
 	n := p.node
 
-	// Extract skill from NODE_CREATED event.
 	var skill string
 	for _, e := range p.nodeEvents[n.NodeId] {
 		if nc, ok := e.(NodeCreatedItem); ok {
@@ -357,41 +314,16 @@ func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
 		}
 	}
 
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Agent Configuration"))
-	sb.WriteString(strings.Repeat("─", 28))
-	sb.WriteString("\n\n")
-
-	if skill != "" {
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Skill"), WhiteStyle.Render(skill)))
-	}
-	rt := n.RuntimeId
-	if rt == "" {
-		rt = "—"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Runtime"), WhiteStyle.Render(rt)))
+	sectionHeader(sb, "Agent Configuration", 28)
+	kvLine(sb, "Skill", emptyDash(skill, ""), WhiteStyle)
+	kvLine(sb, "Runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
 
 	sb.WriteString("\n")
-	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── Prompt Context"))
-	sb.WriteString(strings.Repeat("─", 32))
-	sb.WriteString("\n\n")
-
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Node ID"), WhiteStyle.Render(n.NodeId)))
-
-	gate := n.Gate
-	if gate == "" || gate == "none" {
-		gate = "none"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Gate"), WhiteStyle.Render(gate)))
-
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Retry Max"), WhiteStyle.Render(fmt.Sprintf("%d", n.RetryCount))))
-
-	deps := strings.Join(n.DependsOn, ", ")
-	if deps == "" {
-		deps = "none"
-	}
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Depends On"), WhiteStyle.Render(deps)))
+	sectionHeader(sb, "Prompt Context", 32)
+	kvLine(sb, "Node ID", n.NodeId, WhiteStyle)
+	kvLine(sb, "Gate", emptyDash(n.Gate, "none"), WhiteStyle)
+	kvLine(sb, "Retry Max", fmt.Sprintf("%d", n.RetryCount), WhiteStyle)
+	kvLine(sb, "Depends On", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
 
 	sb.WriteString("\n")
 	sb.WriteString(GrayStyle.Render("  The full prompt is assembled at runtime by the Claude"))
@@ -401,6 +333,31 @@ func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
 }
 
 // ── Helpers ───────────────────────────────────────
+
+// sectionHeader writes a cyan section divider like "── Status ──────────────".
+func sectionHeader(sb *strings.Builder, title string, repeat int) {
+	sb.WriteString("  ")
+	sb.WriteString(CyanStyle.Render("── " + title))
+	sb.WriteString(strings.Repeat("─", repeat))
+	sb.WriteString("\n")
+}
+
+// kvLine writes a left-aligned label and styled value.
+// label is padded to 12 characters.
+func kvLine(sb *strings.Builder, label string, value string, valueStyle lipgloss.Style) {
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n",
+		GrayStyle.Render(label),
+		valueStyle.Render(value),
+	))
+}
+
+// emptyDash returns "—" if value is empty or equals the exclude string.
+func emptyDash(value, exclude string) string {
+	if value == "" || (exclude != "" && value == exclude) {
+		return "—"
+	}
+	return value
+}
 
 // relativeTime converts an RFC3339 time string to a human-readable relative duration.
 func relativeTime(rfc3339 string) string {
