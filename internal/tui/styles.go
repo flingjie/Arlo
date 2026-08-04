@@ -51,11 +51,14 @@ var (
 	PurpleStyle  = lipgloss.NewStyle().Foreground(Purple)
 	OrangeStyle  = lipgloss.NewStyle().Foreground(Orange)
 
-	// Dim style for completed/pending nodes.
+	// Dim style for completed/terminal nodes.
 	DimStyle = lipgloss.NewStyle().Foreground(Gray).Faint(true)
 
 	// Running style for the currently executing node.
 	RunningStyle = lipgloss.NewStyle().Foreground(White).Bold(true)
+
+	// Failed style for failed/cancelled nodes — stands out in red.
+	FailedStyle = lipgloss.NewStyle().Foreground(Red)
 
 	// Progress bar styles.
 	ProgressFull  = lipgloss.NewStyle().Foreground(Green)
@@ -87,10 +90,12 @@ func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
 		return SelectedStyle
 	}
 	switch status {
-	case "RUNNING":
+	case "RUNNING", "STARTING":
 		return RunningStyle
 	case "COMPLETED":
 		return DimStyle
+	case "FAILED", "CANCELLED":
+		return FailedStyle
 	case "WAITING":
 		return PurpleStyle
 	default:

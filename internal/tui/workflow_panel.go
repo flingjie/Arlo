@@ -89,15 +89,17 @@ func (p *WorkflowPanel) SetFocus(focused bool) {
 func (p *WorkflowPanel) View(width int) string {
 	var sb strings.Builder
 
-	// Header with progress.
-	completed, total := p.countStatus()
-	sb.WriteString(HeaderStyle.Render(fmt.Sprintf("WORKFLOW  %d/%d", completed, total)))
-	sb.WriteString("\n")
-	barWidth := width - 4
-	if barWidth < 0 {
-		barWidth = 0
+	// Header with progress and status counts.
+	done, failed, total := p.countTerminal()
+	sb.WriteString(HeaderStyle.Render("WORKFLOW"))
+	sb.WriteString("  ")
+	sb.WriteString(GrayStyle.Render(fmt.Sprintf("%d/%d", done, total)))
+	if failed > 0 {
+		sb.WriteString("  ")
+		sb.WriteString(RedStyle.Render(fmt.Sprintf("✗%d", failed)))
 	}
-	sb.WriteString(ProgressBar(completed, total, barWidth))
+	sb.WriteString("\n")
+	sb.WriteString(ProgressBar(done, total, width-2))
 	sb.WriteString("\n\n")
 
 	if len(p.nodes) == 0 {
@@ -113,17 +115,6 @@ func (p *WorkflowPanel) View(width int) string {
 	}
 
 	return PanelStyle.Width(width).Render(sb.String())
-}
-
-// countStatus returns (completed, total) nodes for the progress bar.
-func (p *WorkflowPanel) countStatus() (int, int) {
-	completed := 0
-	for _, n := range p.nodes {
-		if n.Status == "COMPLETED" {
-			completed++
-		}
-	}
-	return completed, len(p.nodes)
 }
 
 // renderNode renders a single node and its subtree in dependency order.
@@ -162,6 +153,22 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState) {
 			}
 		}
 	}
+}
+
+// countTerminal returns (done, failed, total) where done includes all terminal
+// states (COMPLETED, FAILED, CANCELLED). Used for the progress bar and header.
+func (p *WorkflowPanel) countTerminal() (int, int, int) {
+	done, failed := 0, 0
+	for _, n := range p.nodes {
+		switch n.Status {
+		case "COMPLETED":
+			done++
+		case "FAILED", "CANCELLED":
+			done++
+			failed++
+		}
+	}
+	return done, failed, len(p.nodes)
 }
 
 // flatIndex finds the flat visual index of a node for selection tracking.
