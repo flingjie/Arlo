@@ -87,9 +87,18 @@ func (p *WorkflowPanel) SetFocus(focused bool) {
 // View renders the workflow tree.
 func (p *WorkflowPanel) View(width int) string {
 	var sb strings.Builder
+
+	// Header with progress and status counts.
+	done, failed, total := p.countTerminal()
 	sb.WriteString(HeaderStyle.Render("WORKFLOW"))
+	sb.WriteString("  ")
+	sb.WriteString(GrayStyle.Render(fmt.Sprintf("%d/%d", done, total)))
+	if failed > 0 {
+		sb.WriteString("  ")
+		sb.WriteString(RedStyle.Render(fmt.Sprintf("✗%d", failed)))
+	}
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", width-2))
+	sb.WriteString(ProgressBar(done, total, width-2))
 	sb.WriteString("\n\n")
 
 	if len(p.nodes) == 0 {
@@ -114,10 +123,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, dep
 		expandIcon = "▶"
 	}
 
-	lineStyle := NormalStyle
-	if p.focused && p.selected == idx {
-		lineStyle = SelectedStyle
-	}
+	lineStyle := nodeLineStyle(n.Status, p.focused && p.selected == idx)
 
 	icon := StatusIcon(n.Status)
 	sb.WriteString(lineStyle.Render(fmt.Sprintf("%s%s %s %s", indent, expandIcon, icon, n.NodeId)))
@@ -147,6 +153,22 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, dep
 			}
 		}
 	}
+}
+
+// countTerminal returns (done, failed, total) where done includes all terminal
+// states (COMPLETED, FAILED, CANCELLED). Used for the progress bar and header.
+func (p *WorkflowPanel) countTerminal() (int, int, int) {
+	done, failed := 0, 0
+	for _, n := range p.nodes {
+		switch n.Status {
+		case "COMPLETED":
+			done++
+		case "FAILED", "CANCELLED":
+			done++
+			failed++
+		}
+	}
+	return done, failed, len(p.nodes)
 }
 
 // GetSelectedNode returns the node ID of the currently selected node.

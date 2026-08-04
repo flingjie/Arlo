@@ -40,13 +40,22 @@ var (
 
 	NormalStyle = lipgloss.NewStyle()
 
-	GreenStyle  = lipgloss.NewStyle().Foreground(Green)
-	YellowStyle = lipgloss.NewStyle().Foreground(Yellow)
-	RedStyle    = lipgloss.NewStyle().Foreground(Red)
-	GrayStyle   = lipgloss.NewStyle().Foreground(Gray)
-	WhiteStyle  = lipgloss.NewStyle().Foreground(White)
-	CyanStyle   = lipgloss.NewStyle().Foreground(Cyan)
-	PurpleStyle = lipgloss.NewStyle().Foreground(Purple)
+	GreenStyle   = lipgloss.NewStyle().Foreground(Green)
+	YellowStyle  = lipgloss.NewStyle().Foreground(Yellow)
+	RedStyle     = lipgloss.NewStyle().Foreground(Red)
+	GrayStyle    = lipgloss.NewStyle().Foreground(Gray)
+	WhiteStyle   = lipgloss.NewStyle().Foreground(White)
+	CyanStyle    = lipgloss.NewStyle().Foreground(Cyan)
+	PurpleStyle  = lipgloss.NewStyle().Foreground(Purple)
+
+	// Dim style for completed/terminal nodes.
+	DimStyle = lipgloss.NewStyle().Foreground(Gray).Faint(true)
+
+	// Running style for the currently executing node.
+	RunningStyle = lipgloss.NewStyle().Foreground(White).Bold(true)
+
+	// Failed style for failed/cancelled nodes — stands out in red.
+	FailedStyle = lipgloss.NewStyle().Foreground(Red)
 )
 
 // StatusIcon returns a colored dot for a node status.
@@ -64,6 +73,25 @@ func StatusIcon(status string) string {
 		return CyanStyle.Render("●")
 	default:
 		return GrayStyle.Render("○")
+	}
+}
+
+// nodeLineStyle returns the style for a node's main line based on its status.
+func nodeLineStyle(status string, isSelected bool) lipgloss.Style {
+	if isSelected {
+		return SelectedStyle
+	}
+	switch status {
+	case "RUNNING", "STARTING":
+		return RunningStyle
+	case "COMPLETED":
+		return DimStyle
+	case "FAILED", "CANCELLED":
+		return FailedStyle
+	case "WAITING":
+		return PurpleStyle
+	default:
+		return NormalStyle
 	}
 }
 

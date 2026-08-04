@@ -349,10 +349,14 @@ func (m *Model) renderOverview(width int) string {
 		status = "LOADING"
 	}
 
-	completed := 0
+	completed, failed := 0, 0
 	for _, n := range m.wf.Nodes {
-		if n.Status == "COMPLETED" {
+		switch n.Status {
+		case "COMPLETED":
 			completed++
+		case "FAILED", "CANCELLED":
+			completed++
+			failed++
 		}
 	}
 	total := len(m.wf.Nodes)
@@ -371,6 +375,9 @@ func (m *Model) renderOverview(width int) string {
 		elapsed,
 		total,
 	)
+	if failed > 0 {
+		left += "  " + RedStyle.Render(fmt.Sprintf("✗%d", failed))
+	}
 	right := bar
 
 	leftLen := lipgloss.Width(left)
