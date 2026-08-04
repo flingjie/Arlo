@@ -3,12 +3,14 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
+	"github.com/lingjiefan/arlo/internal/runtime"
 	"github.com/lingjiefan/arlo/internal/state"
 	"github.com/lingjiefan/arlo/internal/store"
 	"github.com/lingjiefan/arlo/internal/workflow"
@@ -865,5 +867,151 @@ nodes:
 	ns2, _ := ss.GetNodeState(ctx, "a2")
 	if ns2.Status != domain.NodeStatusRunning {
 		t.Errorf("a2 = %s, want RUNNING", ns2.Status)
+	}
+}
+
+// ── launchRuntime Failure Tests ─────────────────
+
+// failingAdapter implements runtime.Adapter and returns errors from Start.
+type failingAdapter struct {
+	startErr error
+}
+
+func (a *failingAdapter) Prepare(ctx context.Context, inst domain.RuntimeInstance) error { return nil }
+func (a *failingAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) error    { return a.startErr }
+func (a *failingAdapter) Stop(ctx context.Context, id string) error                       { return nil }
+func (a *failingAdapter) Destroy(ctx context.Context, id string) error                    { return nil }
+func (a *failingAdapter) SendInstruction(ctx context.Context, id string, instruction domain.Instruction) error {
+	return nil
+}
+func (a *failingAdapter) Status(ctx context.Context, id string) (domain.RuntimeStatus, error) {
+	return domain.RuntimeStatus{ID: id, State: domain.RuntimeStateRunning}, nil
+}
+
+// TestLaunchRuntimeFailureEmitsNodeFailed verifies that when launchRuntime fails
+// (adapter Start returns error), a NODE_FAILED event is emitted and the node
+// becomes READY (retryable) when retryCount < maxRetries.
+func TestLaunchRuntimeFailureEmitsNodeFailed(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	// Set up a runtime manager with a failing adapter.
+	mgr := runtime.NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &failingAdapter{startErr: errors.New("cannot start")})
+	r.runtimeMgr = mgr
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Reconcile: should append NODE_STARTED, then launchRuntime fails.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// analyze node has max_retries=1, retryCount=0.
+	// After launch failure: 0 < 1 → retryable → status READY, retryCount=1.
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusReady {
+		t.Fatalf("expected READY after launch failure (retryable), got %s", ns.Status)
+	}
+	if ns.RetryCount != 1 {
+		t.Fatalf("expected retryCount=1 after retryable failure, got %d", ns.RetryCount)
+	}
+	if ns.SessionID == "" {
+		t.Error("session ID should be set from NODE_STARTED")
+	}
+}
+
+// TestLaunchRuntimeFailureRetriesExhausted verifies that when launchRuntime
+// fails and retries are exhausted (retryCount >= maxRetries), the node becomes
+// FAILED with a non-retryable NODE_FAILED event.
+func TestLaunchRuntimeFailureRetriesExhausted(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	// Set up a runtime manager with a failing adapter (always fails).
+	mgr := runtime.NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &failingAdapter{startErr: errors.New("cannot start")})
+	r.runtimeMgr = mgr
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// First reconcile: node starts but launch fails → READY (retryable), retryCount=1.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusReady {
+		t.Fatalf("after first reconcile: expected READY, got %s", ns.Status)
+	}
+	if ns.RetryCount != 1 {
+		t.Fatalf("after first reconcile: expected retryCount=1, got %d", ns.RetryCount)
+	}
+
+	// Second reconcile: engine emits RETRY_NODE → NODE_STARTED, launchRuntime fails again.
+	// retryCount=1, maxRetries=1 → 1 < 1 → false → non-retryable → FAILED.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ = ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusFailed {
+		t.Fatalf("after second reconcile: expected FAILED (retries exhausted), got %s", ns.Status)
+	}
+}
+
+// TestLaunchRuntimeFailureWithDifferentMaxRetries verifies retryability for
+// a node with max_retries=2 (allowing more than one retry).
+func TestLaunchRuntimeFailureWithDifferentMaxRetries(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+
+	mgr := runtime.NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &failingAdapter{startErr: errors.New("cannot start")})
+	r.runtimeMgr = mgr
+
+	// Use a YAML where the first node has max_retries=2.
+	highRetryYAML := `
+name: multi-retry
+version: 1
+nodes:
+  - id: step1
+    skill: root-cause
+    runtime:
+      provider: claude-code
+    retry:
+      max_retries: 2
+      backoff: 10s
+`
+	_, wfID := seedWorkflow(t, es, ss, r, eng, highRetryYAML, "t1")
+
+	// First reconcile: launch fails → retryCount=0, maxRetries=2 → retryable.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "step1")
+	if ns.Status != domain.NodeStatusReady {
+		t.Fatalf("attempt 1: expected READY, got %s", ns.Status)
+	}
+	if ns.RetryCount != 1 {
+		t.Fatalf("attempt 1: expected retryCount=1, got %d", ns.RetryCount)
+	}
+
+	// Second reconcile (retry attempt 1): launch fails again → retryCount=1 < 2 → retryable.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ = ss.GetNodeState(ctx, "step1")
+	if ns.Status != domain.NodeStatusReady {
+		t.Fatalf("attempt 2: expected READY, got %s", ns.Status)
+	}
+	if ns.RetryCount != 2 {
+		t.Fatalf("attempt 2: expected retryCount=2, got %d", ns.RetryCount)
+	}
+
+	// Third reconcile (retry attempt 2): launch fails again → retryCount=2 < 2 → false → non-retryable.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	ns, _ = ss.GetNodeState(ctx, "step1")
+	if ns.Status != domain.NodeStatusFailed {
+		t.Fatalf("attempt 3: expected FAILED (retries exhausted), got %s", ns.Status)
 	}
 }

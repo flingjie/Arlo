@@ -59,7 +59,7 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 		return fmt.Errorf("claude CLI not found: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.Command("claude",
 		"--print",             // non-interactive output
 		"--verbose",           // required for stream-json with --print
 		"--output-format", "stream-json",

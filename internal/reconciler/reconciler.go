@@ -307,7 +307,32 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 			Prompt:     prompt,
 		})
 		if err != nil {
-			slog.Warn("failed to launch runtime", "node", nodeID, "error", err)
+			// Fetch current node state to get the SessionID set by NODE_STARTED.
+			ns, nsErr := r.stateStore.GetNodeState(ctx, nodeID)
+			if nsErr != nil {
+				slog.Warn("failed to launch runtime and failed to get node state",
+					"node", nodeID, "error", err, "stateErr", nsErr)
+				return
+			}
+
+			// Determine retryability based on the graph's max_retries.
+			// retryCount is the number of previous failures (before this attempt).
+			retryable := retryCount < n.Retry.MaxRetries
+			reason := fmt.Sprintf("runtime launch failed: %v", err)
+			if !retryable {
+				reason = fmt.Sprintf("runtime launch failed (retries exhausted): %v", err)
+			}
+
+			r.emitNodeEvent(ctx, workflowID, *ns, store.EventNodeFailed,
+				domain.NodeFailed{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					SessionID:  ns.SessionID,
+					Reason:     reason,
+					Retryable:  retryable,
+				})
+			slog.Warn("failed to launch runtime",
+				"node", nodeID, "error", err, "retryable", retryable)
 		}
 		return
 	}

@@ -301,17 +301,35 @@ func (m *Model) handleEvent(msg eventMsg) []tea.Cmd {
 	if msg.event == nil {
 		return []tea.Cmd{m.client.RecvEvent()}
 	}
+	cmds := []tea.Cmd{m.client.RecvEvent()}
 	// Dedup by event ID — prevents duplicates from reconnect or replay.
 	if !m.seenEvents[msg.event.EventId] {
 		m.seenEvents[msg.event.EventId] = true
 		item := EventToItem(msg.event)
 		m.dispatcher.Emit(EventAppendedEvent{Item: item})
+		// For state-changing events, refresh the snapshot so the
+		// Workflow panel and Inspector stay in sync with the projection.
+		if isStateChangeEvent(msg.event.Type) {
+			cmds = append(cmds, m.client.GetSnapshot(m.workflow))
+		}
 	}
 	// Prune seenEvents map if it grows large.
 	if len(m.seenEvents) > pruneThreshold {
 		m.seenEvents = make(map[string]bool)
 	}
-	return []tea.Cmd{m.client.RecvEvent()}
+	return cmds
+}
+
+// isStateChangeEvent reports whether an event type mutates node/workflow state
+// that is visible in the Workflow panel and Inspector. These events trigger a
+// GetSnapshot to keep the TUI panels in sync with server-side projections.
+func isStateChangeEvent(eventType string) bool {
+	switch eventType {
+	case "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED", "NODE_WAITING",
+		"TASK_COMPLETED", "TASK_FAILED":
+		return true
+	}
+	return false
 }
 
 func (m *Model) handleCommandResult(msg commandResultMsg) []tea.Cmd {

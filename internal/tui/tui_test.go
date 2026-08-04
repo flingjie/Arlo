@@ -938,6 +938,91 @@ func TestDefaultFilter(t *testing.T) {
 	}
 }
 
+// ── isStateChangeEvent ───────────────────────────────
+
+func TestIsStateChangeEventNodeFailed(t *testing.T) {
+	if !isStateChangeEvent("NODE_FAILED") {
+		t.Error("NODE_FAILED should be a state-change event")
+	}
+}
+
+func TestIsStateChangeEventNodeCompleted(t *testing.T) {
+	if !isStateChangeEvent("NODE_COMPLETED") {
+		t.Error("NODE_COMPLETED should be a state-change event")
+	}
+}
+
+func TestIsStateChangeEventNodeStarted(t *testing.T) {
+	if !isStateChangeEvent("NODE_STARTED") {
+		t.Error("NODE_STARTED should be a state-change event")
+	}
+}
+
+func TestIsStateChangeEventTaskCompleted(t *testing.T) {
+	if !isStateChangeEvent("TASK_COMPLETED") {
+		t.Error("TASK_COMPLETED should be a state-change event")
+	}
+}
+
+func TestIsStateChangeEventNonStateChange(t *testing.T) {
+	nonState := []string{"METRICS_SNAPSHOT", "NODE_HEARTBEAT", "NODE_ANNOTATED",
+		"NODE_CREATED", "TASK_CREATED", "ARTIFACT_CREATED", "NODE_UNKNOWN_EVENT"}
+	for _, typ := range nonState {
+		if isStateChangeEvent(typ) {
+			t.Errorf("%s should NOT be a state-change event", typ)
+		}
+	}
+}
+
+// ── handleEvent schedules GetSnapshot ────────────────
+
+func TestHandleEventSchedulesGetSnapshotForNodeFailed(t *testing.T) {
+	m := New("socket", "wf-1")
+	evt := &arlov1.Event{EventId: "evt-1", Type: "NODE_FAILED"}
+	cmds := m.handleEvent(eventMsg{event: evt})
+	if len(cmds) != 2 {
+		t.Errorf("handleEvent(NODE_FAILED) returned %d commands, want 2 (RecvEvent + GetSnapshot)", len(cmds))
+	}
+}
+
+func TestHandleEventSchedulesGetSnapshotForNodeCompleted(t *testing.T) {
+	m := New("socket", "wf-1")
+	evt := &arlov1.Event{EventId: "evt-1", Type: "NODE_COMPLETED"}
+	cmds := m.handleEvent(eventMsg{event: evt})
+	if len(cmds) != 2 {
+		t.Errorf("handleEvent(NODE_COMPLETED) returned %d commands, want 2 (RecvEvent + GetSnapshot)", len(cmds))
+	}
+}
+
+func TestHandleEventNoGetSnapshotForMetricsSnapshot(t *testing.T) {
+	m := New("socket", "wf-1")
+	evt := &arlov1.Event{EventId: "evt-1", Type: "METRICS_SNAPSHOT"}
+	cmds := m.handleEvent(eventMsg{event: evt})
+	if len(cmds) != 1 {
+		t.Errorf("handleEvent(METRICS_SNAPSHOT) returned %d commands, want 1 (RecvEvent only)", len(cmds))
+	}
+}
+
+func TestHandleEventNoGetSnapshotForDuplicateEvent(t *testing.T) {
+	m := New("socket", "wf-1")
+	evt := &arlov1.Event{EventId: "evt-1", Type: "NODE_FAILED"}
+	// First time should schedule GetSnapshot.
+	_ = m.handleEvent(eventMsg{event: evt})
+	// Duplicate should NOT schedule GetSnapshot.
+	cmds := m.handleEvent(eventMsg{event: evt})
+	if len(cmds) != 1 {
+		t.Errorf("handleEvent(duplicate NODE_FAILED) returned %d commands, want 1 (RecvEvent only)", len(cmds))
+	}
+}
+
+func TestHandleEventNilEvent(t *testing.T) {
+	m := New("socket", "wf-1")
+	cmds := m.handleEvent(eventMsg{event: nil})
+	if len(cmds) != 1 {
+		t.Errorf("handleEvent(nil) returned %d commands, want 1 (RecvEvent only)", len(cmds))
+	}
+}
+
 // ── Helpers ────────────────────────────────────────
 
 // stripAnsi removes ANSI escape sequences for test assertions.
