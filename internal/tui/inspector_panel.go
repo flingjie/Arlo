@@ -300,7 +300,11 @@ func formatLogLine(item TimelineItem) string {
 		}
 		return "waiting"
 	case NodeAnnotatedItem:
-		return fmt.Sprintf("%s = %s", it.Key, it.Value)
+		line := fmt.Sprintf("%s = %s", it.Key, it.Value)
+		if isImportantAnnotation(it.Key) {
+			return YellowStyle.Bold(true).Render(line)
+		}
+		return line
 	case MetricsSnapshotItem:
 		return fmt.Sprintf("metrics  %d↑/%d↓ tokens · %d tools · %s",
 			it.TokensIn, it.TokensOut, it.ToolCalls, formatDur(it.DurationMs))
@@ -333,6 +337,11 @@ func lastMetrics(events []TimelineItem) (MetricsSnapshotItem, bool) {
 		}
 	}
 	return MetricsSnapshotItem{}, false
+}
+
+func isImportantAnnotation(key string) bool {
+	k := strings.ToLower(key)
+	return k == "runtime.launch" || k == "workdir" || strings.Contains(k, "workdir")
 }
 
 // ── Metrics Tab ──────────────────────────────────

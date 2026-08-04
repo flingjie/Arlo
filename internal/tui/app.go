@@ -177,6 +177,10 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ui.HelpOpen = false
 			return m, nil
 		}
+		if m.ui.InspectorOverlay {
+			m.ui.InspectorOverlay = false
+			return m, nil
+		}
 		if m.ui.FilterOpen {
 			m.ui.FilterOpen = false
 			return m, nil
@@ -220,6 +224,51 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.ui.HelpOpen = !m.ui.HelpOpen
 		return m, nil
+
+	case " ":
+		if m.ui.Focus == FocusWorkflow {
+			m.workflowPanel.Update(msg)
+			return m, nil
+		}
+
+	case "-":
+		m.ui.WorkflowNarrow = true
+		m.workflowPanel.SetNarrow(true)
+		return m, nil
+	case "+":
+		m.ui.WorkflowNarrow = false
+		m.workflowPanel.SetNarrow(false)
+		return m, nil
+
+	case "s":
+		m.timelinePanel.ResumeFollow()
+		return m, nil
+	case "c":
+		m.timelinePanel.ToggleCompact()
+		return m, nil
+
+	case "i":
+		mode := layoutModeForWidth(m.ui.Width)
+		if mode != LayoutFull {
+			m.ui.InspectorOverlay = !m.ui.InspectorOverlay
+			return m, nil
+		}
+
+	case "right", "l":
+		if m.ui.Focus == FocusTimeline {
+			m.timelinePanel.Update(msg)
+			return m, nil
+		}
+		if m.ui.Focus == FocusWorkflow {
+			m.workflowPanel.Update(msg)
+			return m, nil
+		}
+
+	case "left", "h":
+		if m.ui.Focus == FocusWorkflow {
+			m.workflowPanel.Update(msg)
+			return m, nil
+		}
 
 	default:
 		if tab, ok := tabKeys[msg.String()]; ok {
@@ -273,6 +322,16 @@ func (m *Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) cycleFocus() {
+	mode := layoutModeForWidth(m.ui.Width)
+	switch mode {
+	case LayoutSingle:
+		m.cycleFocusSingle()
+		return
+	case LayoutNoInspector:
+		m.cycleFocusNoInspector()
+		return
+	}
+
 	switch m.ui.Focus {
 	case FocusWorkflow:
 		m.ui.Focus = FocusTimeline
@@ -286,6 +345,36 @@ func (m *Model) cycleFocus() {
 	case FocusInspector:
 		m.ui.Focus = FocusWorkflow
 		m.inspectorPanel.SetFocus(false)
+		m.workflowPanel.SetFocus(true)
+	}
+}
+
+func (m *Model) cycleFocusNoInspector() {
+	m.inspectorPanel.SetFocus(false)
+	if m.ui.Focus == FocusWorkflow {
+		m.ui.Focus = FocusTimeline
+		m.workflowPanel.SetFocus(false)
+		m.timelinePanel.SetFocus(true)
+		return
+	}
+	m.ui.Focus = FocusWorkflow
+	m.timelinePanel.SetFocus(false)
+	m.workflowPanel.SetFocus(true)
+}
+
+func (m *Model) cycleFocusSingle() {
+	m.workflowPanel.SetFocus(false)
+	m.timelinePanel.SetFocus(false)
+	m.inspectorPanel.SetFocus(false)
+	switch m.ui.Focus {
+	case FocusWorkflow:
+		m.ui.Focus = FocusTimeline
+		m.timelinePanel.SetFocus(true)
+	case FocusTimeline:
+		m.ui.Focus = FocusInspector
+		m.inspectorPanel.SetFocus(true)
+	default:
+		m.ui.Focus = FocusWorkflow
 		m.workflowPanel.SetFocus(true)
 	}
 }
@@ -481,21 +570,26 @@ const (
 func (m *Model) renderDashboard() string {
 	w := max(m.ui.Width, dashboardMinWidth)
 	h := max(m.ui.Height, dashboardMinHeight)
+	mode := layoutModeForWidth(m.ui.Width)
+
+	// Use actual width for layout decisions when terminal is narrow.
+	if m.ui.Width > 0 {
+		w = m.ui.Width
+	}
 
 	overview := m.renderOverview(w)
-
-	// 25% | 50% | 25% split.
-	leftW := max(w*25/100, 25)
-	rightW := max(w*25/100, 25)
-	midW := w - leftW - rightW
-
 	panelH := h - overviewHeight
 
-	left := m.workflowPanel.View(leftW, panelH)
-	mid := m.timelinePanel.View(midW, panelH)
-	right := m.inspectorPanel.View(rightW, panelH)
+	var panels string
+	switch mode {
+	case LayoutSingle:
+		panels = m.renderSinglePane(w, panelH)
+	case LayoutNoInspector:
+		panels = m.renderTwoPane(w, panelH)
+	default:
+		panels = m.renderThreePane(w, panelH)
+	}
 
-	panels := lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
 	status := m.renderCommandBar(w)
 
 	var overlay string
@@ -503,9 +597,49 @@ func (m *Model) renderDashboard() string {
 		overlay = m.renderHelpOverlay()
 	} else if m.ui.FilterOpen {
 		overlay = m.renderFilterOverlay()
+	} else if m.ui.InspectorOverlay && mode != LayoutFull {
+		overlay = m.inspectorPanel.View(w, panelH)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, overview, panels, status, overlay)
+}
+
+func (m *Model) renderThreePane(w, panelH int) string {
+	leftW := max(w*25/100, 25)
+	if m.ui.WorkflowNarrow {
+		leftW = 16
+	}
+	rightW := max(w*25/100, 25)
+	midW := w - leftW - rightW
+	if midW < 20 {
+		midW = 20
+	}
+	left := m.workflowPanel.View(leftW, panelH)
+	mid := m.timelinePanel.View(midW, panelH)
+	right := m.inspectorPanel.View(rightW, panelH)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
+}
+
+func (m *Model) renderTwoPane(w, panelH int) string {
+	leftW := max(w*35/100, 20)
+	if m.ui.WorkflowNarrow {
+		leftW = 16
+	}
+	midW := w - leftW
+	left := m.workflowPanel.View(leftW, panelH)
+	mid := m.timelinePanel.View(midW, panelH)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid)
+}
+
+func (m *Model) renderSinglePane(w, panelH int) string {
+	switch m.ui.Focus {
+	case FocusTimeline:
+		return m.timelinePanel.View(w, panelH)
+	case FocusInspector:
+		return m.inspectorPanel.View(w, panelH)
+	default:
+		return m.workflowPanel.View(w, panelH)
+	}
 }
 
 // ── Overview bar ────────────────────────────────────────────────────
@@ -622,7 +756,7 @@ func (m *Model) renderKeyHints() string {
 		approve = YellowStyle.Bold(true).Render("p:approve")
 		reject = YellowStyle.Bold(true).Render("r:reject")
 	}
-	rest := GrayStyle.Render("R:retry  f:filter  ?:help  q:quit")
+	rest := GrayStyle.Render("R:retry  f:filter  s:follow  c:compact  ?:help  q:quit")
 	return attach + "  " + approve + "  " + reject + "  " + rest
 }
 
@@ -655,10 +789,16 @@ func (m *Model) renderHelpOverlay() string {
 		"│  j/k ↑↓   navigate                     │",
 		"│  Tab      cycle panels                 │",
 		"│  Enter    inspect selection            │",
+		"│  Space    toggle node detail           │",
+		"│  - / +    collapse / expand workflow   │",
 		"│  a        attach                       │",
 		"│  p / r    approve / reject             │",
 		"│  R        retry                        │",
 		"│  f        filter                       │",
+		"│  s        resume timeline follow       │",
+		"│  c        compact timeline             │",
+		"│  →        expand timeline line         │",
+		"│  i        inspector overlay (narrow)   │",
 		"│  ?        toggle this help             │",
 		"│  :        command mode                 │",
 		"│  q / Esc  quit (closes overlay first)  │",

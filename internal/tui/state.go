@@ -56,6 +56,35 @@ type UIState struct {
 	CommandInput  string
 	Width         int
 	Height        int
+
+	// Phase 3 density / layout
+	WorkflowNarrow   bool // collapsed workflow column (icon + short name)
+	InspectorOverlay bool // force inspector as overlay when layout hides it
+}
+
+// LayoutMode is derived from terminal width.
+type LayoutMode int
+
+const (
+	LayoutFull LayoutMode = iota
+	LayoutNoInspector
+	LayoutSingle
+)
+
+const (
+	layoutBreakInspector = 100
+	layoutBreakSingle    = 70
+)
+
+func layoutModeForWidth(width int) LayoutMode {
+	switch {
+	case width > 0 && width < layoutBreakSingle:
+		return LayoutSingle
+	case width > 0 && width < layoutBreakInspector:
+		return LayoutNoInspector
+	default:
+		return LayoutFull
+	}
 }
 
 // WorkflowState holds the current snapshot of workflow data.

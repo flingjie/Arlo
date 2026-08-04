@@ -13,7 +13,9 @@ import (
 type WorkflowPanel struct {
 	nodes      []*arlov1.NodeState
 	selected   int
-	collapsed  map[string]bool
+	collapsed  map[string]bool // children tree collapsed
+	detailOpen map[string]bool // session/gate sublines visible
+	narrow     bool            // column collapsed to icon+name
 	focused    bool
 	dispatcher *Dispatcher
 
@@ -26,6 +28,7 @@ type WorkflowPanel struct {
 func NewWorkflowPanel(dispatcher *Dispatcher) *WorkflowPanel {
 	return &WorkflowPanel{
 		collapsed:  make(map[string]bool),
+		detailOpen: make(map[string]bool),
 		dispatcher: dispatcher,
 	}
 }
@@ -68,6 +71,11 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			if p.selected < len(p.nodes) {
 				p.collapsed[p.nodes[p.selected].NodeId] = false
 			}
+		case " ":
+			id := p.GetSelectedNode()
+			if id != "" {
+				p.detailOpen[id] = !p.detailOpen[id]
+			}
 		case "enter":
 			return nil, true
 		}
@@ -78,11 +86,21 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 
 func (p *WorkflowPanel) SetFocus(focused bool) { p.focused = focused }
 
+// SetNarrow collapses the column to icon + short name (no status/sublines).
+func (p *WorkflowPanel) SetNarrow(narrow bool) { p.narrow = narrow }
+
+// Narrow reports whether the column is collapsed.
+func (p *WorkflowPanel) Narrow() bool { return p.narrow }
+
 // View renders the workflow box. Every line is padded to exactly `width` visible chars.
 func (p *WorkflowPanel) View(width, height int) string {
 	w := width
-	if w < 30 {
-		w = 30
+	minW := 30
+	if p.narrow {
+		minW = 14
+	}
+	if w < minW {
+		w = minW
 	}
 	contentW := w - 2 // space between │ borders
 
@@ -96,25 +114,30 @@ func (p *WorkflowPanel) View(width, height int) string {
 		title = "WORKFLOW *"
 		titleStyle = CyanStyle.Bold(true)
 	}
+	if p.narrow {
+		title = "WF"
+		if p.focused {
+			title = "WF *"
+		}
+	}
 	sb.WriteString(boxLine("┌─ "+titleStyle.Render(title), "─", "┐", w))
 
-	// │ Task: wf-xxx               │
-	sb.WriteString(boxLine("│ "+gray.Render("Task:")+" "+WhiteStyle.Render(p.wfID), " ", "│", w))
-
-	// │ Status: ACTIVE  Nodes: 0/3 │
-	completed, _ := p.countStatus()
-	status := fmt.Sprintf("Status: %s       Nodes: %d/%d", p.wfStatus, completed, len(p.nodes))
-	sb.WriteString(boxLine("│ "+status, " ", "│", w))
-
-	// ├────────────────────────────┤
-	sb.WriteString(boxLine("├", "─", "┤", w))
-
-	// Blank line.
-	sb.WriteString(boxLine("│", " ", "│", w))
+	if !p.narrow {
+		sb.WriteString(boxLine("│ "+gray.Render("Task:")+" "+WhiteStyle.Render(p.wfID), " ", "│", w))
+		completed, _ := p.countStatus()
+		status := fmt.Sprintf("Status: %s       Nodes: %d/%d", p.wfStatus, completed, len(p.nodes))
+		sb.WriteString(boxLine("│ "+status, " ", "│", w))
+		sb.WriteString(boxLine("├", "─", "┤", w))
+		sb.WriteString(boxLine("│", " ", "│", w))
+	}
 
 	// Nodes.
 	if len(p.nodes) == 0 {
-		sb.WriteString(boxLine("│ "+GrayStyle.Render("no nodes yet..."), " ", "│", w))
+		msg := "Launching…"
+		if p.wfStatus != "" && p.wfStatus != "LOADING" {
+			msg = "no nodes yet…"
+		}
+		sb.WriteString(boxLine("│ "+GrayStyle.Render(msg), " ", "│", w))
 	} else {
 		for _, n := range p.nodes {
 			if len(n.DependsOn) == 0 {
@@ -170,22 +193,37 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, 
 	cursor := SelectionCursor(selected)
 	label := displayStatus(n)
 	icon := StatusIcon(label)
-	statusStyle := statusTextStyle(label, selected)
-	styledLabel := statusStyle.Render(label)
 
-	prefix := cursor + " " + icon + " " + n.NodeId
-	sb.WriteString(boxLine("│ "+prefix+gapTo(styledLabel, contentW-lipgloss.Width(prefix)-1)+styledLabel, " ", "│", w))
+	if p.narrow {
+		name := n.NodeId
+		maxName := contentW - 4
+		if maxName < 2 {
+			maxName = 2
+		}
+		if lipgloss.Width(name) > maxName {
+			name = truncateRunes(name, maxName)
+		}
+		sb.WriteString(boxLine("│ "+cursor+" "+icon+" "+name, " ", "│", w))
+	} else {
+		statusStyle := statusTextStyle(label, selected)
+		styledLabel := statusStyle.Render(label)
+		prefix := cursor + " " + icon + " " + n.NodeId
+		sb.WriteString(boxLine("│ "+prefix+gapTo(styledLabel, contentW-lipgloss.Width(prefix)-1)+styledLabel, " ", "│", w))
 
-	// Sub-lines.
-	if n.SessionId != "" {
-		sb.WriteString(boxLine("│   "+GrayStyle.Render("sess:"+n.SessionId), " ", "│", w))
+		// Sub-lines only when detail is open for this node.
+		if p.detailOpen[n.NodeId] {
+			if n.SessionId != "" {
+				sb.WriteString(boxLine("│   "+GrayStyle.Render("sess:"+n.SessionId), " ", "│", w))
+			}
+			if n.RetryCount > 0 {
+				sb.WriteString(boxLine("│   "+YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount)), " ", "│", w))
+			}
+			if isBlocked(n) {
+				sb.WriteString(boxLine("│   "+YellowStyle.Render("gate: human_approval"), " ", "│", w))
+			}
+		}
 	}
-	if n.RetryCount > 0 {
-		sb.WriteString(boxLine("│   "+YellowStyle.Render(fmt.Sprintf("retry:%d", n.RetryCount)), " ", "│", w))
-	}
-	if isBlocked(n) {
-		sb.WriteString(boxLine("│   "+YellowStyle.Render("gate: human_approval"), " ", "│", w))
-	}
+
 	// Blank separator.
 	if len(n.Children) == 0 || p.collapsed[n.NodeId] {
 		sb.WriteString(boxLine("│", " ", "│", w))

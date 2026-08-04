@@ -298,6 +298,120 @@ func TestWorkflowFocusMark(t *testing.T) {
 	}
 }
 
+// ── Phase 3 density / layout ───────────────────────
+
+func TestLayoutModeForWidth(t *testing.T) {
+	if layoutModeForWidth(120) != LayoutFull {
+		t.Fatal("120 should be full")
+	}
+	if layoutModeForWidth(90) != LayoutNoInspector {
+		t.Fatal("90 should hide inspector")
+	}
+	if layoutModeForWidth(60) != LayoutSingle {
+		t.Fatal("60 should be single pane")
+	}
+}
+
+func TestTimelineCompactFilters(t *testing.T) {
+	p := NewTimelinePanel(nil)
+	now := time.Now()
+	_, _ = p.Update(EventAppendedEvent{Item: NodeStartedItem{Timestamp: now, NodeID: "n1"}})
+	_, _ = p.Update(EventAppendedEvent{Item: NodeFailedItem{Timestamp: now, NodeID: "n1", Reason: "boom"}})
+	_, _ = p.Update(EventAppendedEvent{Item: NodeCompletedItem{Timestamp: now, NodeID: "n2"}})
+	if len(p.visibleItems()) != 3 {
+		t.Fatalf("before compact: got %d", len(p.visibleItems()))
+	}
+	p.ToggleCompact()
+	vis := p.visibleItems()
+	if len(vis) != 2 {
+		t.Fatalf("compact should keep failed+completed, got %d", len(vis))
+	}
+	for _, it := range vis {
+		if !isCriticalTimelineItem(it) {
+			t.Fatalf("non-critical item in compact: %T", it)
+		}
+	}
+}
+
+func TestTimelineResumeFollow(t *testing.T) {
+	p := NewTimelinePanel(nil)
+	p.Follow = false
+	p.cursor = 0
+	_, _ = p.Update(EventAppendedEvent{Item: NodeCompletedItem{Timestamp: time.Now(), NodeID: "n1"}})
+	_, _ = p.Update(EventAppendedEvent{Item: NodeFailedItem{Timestamp: time.Now(), NodeID: "n2"}})
+	p.ResumeFollow()
+	if !p.Follow {
+		t.Fatal("Follow should be true")
+	}
+	if p.cursor != 1 {
+		t.Fatalf("cursor=%d want last", p.cursor)
+	}
+}
+
+func TestWorkflowDetailToggleHidesSession(t *testing.T) {
+	d := NewDispatcher()
+	p := NewWorkflowPanel(d)
+	p.SetFocus(true)
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1", Status: "ACTIVE", Version: 1,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "analyze", Status: "RUNNING", SessionId: "sess-1"},
+		},
+	})
+	view := stripAnsi(p.View(40, 16))
+	if strings.Contains(view, "sess:") {
+		t.Fatal("session should be hidden until Space detail")
+	}
+	_, _ = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	view = stripAnsi(p.View(40, 16))
+	if !strings.Contains(view, "sess:sess-1") {
+		t.Fatalf("expected session after Space:\n%s", view)
+	}
+}
+
+func TestWorkflowNarrowColumn(t *testing.T) {
+	p := NewWorkflowPanel(nil)
+	p.SetNarrow(true)
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1", Status: "ACTIVE", Version: 1,
+		Nodes: []*arlov1.NodeState{{NodeId: "analyze", Status: "RUNNING"}},
+	})
+	view := stripAnsi(p.View(16, 12))
+	if !strings.Contains(view, "WF") {
+		t.Fatalf("narrow title:\n%s", view)
+	}
+	if strings.Contains(view, "RUNNING") {
+		t.Fatal("narrow column should omit status label")
+	}
+}
+
+func TestNarrowLayoutHidesInspector(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ready = true
+	m.ui.Width, m.ui.Height = 90, 30
+	view := stripAnsi(m.View())
+	if strings.Contains(view, "NODE INSPECTOR") {
+		t.Fatalf("inspector should be hidden at width 90:\n%s", view)
+	}
+	m.ui.InspectorOverlay = true
+	view = stripAnsi(m.View())
+	if !strings.Contains(view, "NODE INSPECTOR") && !strings.Contains(view, "select a node") {
+		t.Fatalf("overlay should show inspector:\n%s", view)
+	}
+}
+
+func TestIsImportantAnnotation(t *testing.T) {
+	if !isImportantAnnotation("runtime.launch") {
+		t.Fatal("runtime.launch")
+	}
+	if !isImportantAnnotation("workdir") {
+		t.Fatal("workdir")
+	}
+	if isImportantAnnotation("foo") {
+		t.Fatal("foo should not be important")
+	}
+}
+
 // ── resolveNodeID ──────────────────────────────────
 
 func TestResolveNodeIDFromArgs(t *testing.T) {
