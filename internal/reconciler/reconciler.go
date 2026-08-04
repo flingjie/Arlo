@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -302,7 +303,7 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 				PermissionMode: "auto",
 			},
 			SessionID: sessionID,
-			WorkDir:    "/tmp",
+			WorkDir:    workDir(),
 			Prompt:     prompt,
 		})
 		if err != nil {
@@ -636,6 +637,14 @@ func (r *Reconciler) executeFailWorkflow(ctx context.Context, workflowID string,
 
 	slog.Info("workflow failed", "workflow", workflowID, "reason", d.Reason)
 	return nil
+}
+
+// workDir returns the current working directory, or /tmp as fallback.
+func workDir() string {
+	if d, err := os.Getwd(); err == nil {
+		return d
+	}
+	return "/tmp"
 }
 
 // ── Internal: reconcile all ─────────────────────
