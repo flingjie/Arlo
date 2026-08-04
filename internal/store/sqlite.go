@@ -281,7 +281,10 @@ func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan
 	}()
 
 	// Replay historical events before the caller starts consuming live events.
-	// This ensures clients see events that were appended before they subscribed.
+	// Snapshot lastPosition BEFORE replaying so events appended during replay
+	// are delivered only once — via the Append notification path.
+	caughtUpTo := s.lastPosition
+
 	go func() {
 		pos := fromPosition
 		for {
@@ -290,6 +293,12 @@ func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan
 				return
 			}
 			for _, e := range events {
+				if e.Position > caughtUpTo {
+					// This event was appended after subscription — it will
+					// arrive via the Append notification channel.
+					// Stop replaying to avoid duplicates.
+					return
+				}
 				select {
 				case sub.ch <- e:
 				case <-ctx.Done():
