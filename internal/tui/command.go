@@ -98,15 +98,16 @@ func (c *HelpCommand) Usage() string       { return ":help" }
 func (c *HelpCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
 	return func() tea.Msg {
 		lines := []string{
-			"Available commands:",
+			"Keys:  a attach  p approve  r reject  R retry  f filter  ? help  q quit",
+			"Colon commands:",
 			"  :quit, :q        Exit the TUI",
 			"  :help, :h        Show this help",
 			"  :filter, :f      Toggle event filter",
 			"  :refresh, :rf    Reconnect stream and fetch snapshot",
-			"  :attach, :a      Attach to a node's session (usage: :attach <node-id>)",
-			"  :approve, :ap    Approve a gated node (usage: :approve [<node-id>])",
-			"  :reject, :rj     Reject a gated node (usage: :reject [<node-id>])",
-			"  :retry           Retry a failed/cancelled node (usage: :retry [<node-id>])",
+			"  :attach, :a      Attach (usage: :attach [<node-id>])",
+			"  :approve, :ap    Approve (usage: :approve [<node-id>])",
+			"  :reject, :rj     Reject (usage: :reject [<node-id>])",
+			"  :retry           Retry (usage: :retry [<node-id>])",
 		}
 		return commandMsg{output: strings.Join(lines, "\n")}
 	}
@@ -151,13 +152,13 @@ type AttachCommand struct{}
 func (c *AttachCommand) Name() string        { return "attach" }
 func (c *AttachCommand) Aliases() []string   { return []string{"a"} }
 func (c *AttachCommand) Description() string { return "Attach to a node's workspace session" }
-func (c *AttachCommand) Usage() string       { return ":attach <node-id>" }
+func (c *AttachCommand) Usage() string       { return ":attach [<node-id>]" }
 
 func (c *AttachCommand) Execute(args []string, ctx *AppContext) tea.Cmd {
-	if len(args) < 1 {
-		return func() tea.Msg { return commandMsg{output: "usage: :attach <node-id>"} }
+	nodeID := resolveNodeID(args, ctx)
+	if nodeID == "" {
+		return func() tea.Msg { return commandMsg{output: "no node selected; usage: :attach <node-id>"} }
 	}
-	nodeID := args[0]
 	return func() tea.Msg {
 		for _, n := range ctx.Workflow.Nodes {
 			if n.NodeId == nodeID && n.SessionId != "" {

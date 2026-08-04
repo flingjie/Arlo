@@ -47,12 +47,12 @@ type Model struct {
 // New creates a new TUI model.
 func New(socket, workflow string) *Model {
 	d := NewDispatcher()
-	return &Model{
-		client:    NewClient(socket),
-		socket:    socket,
-		workflow:  workflow,
+	m := &Model{
+		client:     NewClient(socket),
+		socket:     socket,
+		workflow:   workflow,
 		dispatcher: d,
-		commands:  NewCommandRegistry(),
+		commands:   NewCommandRegistry(),
 		ui: UIState{
 			Focus: FocusWorkflow,
 		},
@@ -64,6 +64,8 @@ func New(socket, workflow string) *Model {
 		inspectorPanel: NewInspectorPanel(d),
 		seenEvents:     make(map[string]bool),
 	}
+	m.workflowPanel.SetFocus(true)
+	return m
 }
 
 // Init connects to arlod and starts the event stream.
@@ -158,11 +160,23 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Global keys (non-command-mode).
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+
+	case "q":
+		if m.ui.HelpOpen {
+			m.ui.HelpOpen = false
+			return m, nil
+		}
 		m.quitting = true
 		return m, tea.Quit
 
 	case "esc":
+		if m.ui.HelpOpen {
+			m.ui.HelpOpen = false
+			return m, nil
+		}
 		if m.ui.FilterOpen {
 			m.ui.FilterOpen = false
 			return m, nil
@@ -195,6 +209,18 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ui.FilterOpen = !m.ui.FilterOpen
 		return m, nil
 
+	case "a":
+		return m, m.runRegistryCommand("attach")
+	case "p":
+		return m, m.runRegistryCommand("approve")
+	case "r":
+		return m, m.runRegistryCommand("reject")
+	case "R":
+		return m, m.runRegistryCommand("retry")
+	case "?":
+		m.ui.HelpOpen = !m.ui.HelpOpen
+		return m, nil
+
 	default:
 		if tab, ok := tabKeys[msg.String()]; ok {
 			m.inspectorPanel.SetTab(tab)
@@ -205,6 +231,21 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) appContext() *AppContext {
+	return &AppContext{
+		Socket:     m.socket,
+		WorkflowID: m.workflow,
+		Client:     m.client,
+		UIState:    &m.ui,
+		Workflow:   &m.wf,
+		Dispatch:   m.dispatcher.Emit,
+	}
+}
+
+func (m *Model) runRegistryCommand(name string) tea.Cmd {
+	return m.commands.Execute(name, m.appContext())
+}
+
 func (m *Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -212,15 +253,7 @@ func (m *Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cmdBuf = ""
 		return m, nil
 	case "enter":
-		ctx := &AppContext{
-			Socket:     m.socket,
-			WorkflowID: m.workflow,
-			Client:     m.client,
-			UIState:    &m.ui,
-			Workflow:   &m.wf,
-			Dispatch:   m.dispatcher.Emit,
-		}
-		cmd := m.commands.Execute(m.cmdBuf, ctx)
+		cmd := m.commands.Execute(m.cmdBuf, m.appContext())
 		m.ui.CommandMode = false
 		m.cmdBuf = ""
 		if cmd != nil {
@@ -245,11 +278,14 @@ func (m *Model) cycleFocus() {
 		m.ui.Focus = FocusTimeline
 		m.workflowPanel.SetFocus(false)
 		m.timelinePanel.SetFocus(true)
+		m.inspectorPanel.SetFocus(false)
 	case FocusTimeline:
 		m.ui.Focus = FocusInspector
 		m.timelinePanel.SetFocus(false)
+		m.inspectorPanel.SetFocus(true)
 	case FocusInspector:
 		m.ui.Focus = FocusWorkflow
+		m.inspectorPanel.SetFocus(false)
 		m.workflowPanel.SetFocus(true)
 	}
 }
@@ -463,7 +499,9 @@ func (m *Model) renderDashboard() string {
 	status := m.renderCommandBar(w)
 
 	var overlay string
-	if m.ui.FilterOpen {
+	if m.ui.HelpOpen {
+		overlay = m.renderHelpOverlay()
+	} else if m.ui.FilterOpen {
 		overlay = m.renderFilterOverlay()
 	}
 
@@ -567,10 +605,34 @@ func (m *Model) renderCommandBar(width int) string {
 	}
 
 	mode := focusLabel(m.ui.Focus)
-	cmds := GrayStyle.Render(":a[ttach] :ap[prove] :rj[ect] :retry :f[ilter] :h[elp] :q[uit]")
+	hints := m.renderKeyHints()
+	nav := GrayStyle.Render("↑↓ Tab Enter")
 
-	pad := max(width-lipgloss.Width(mode)-lipgloss.Width(cmds)-1, 1)
-	return StatusBarStyle.Width(width).Render(mode + strings.Repeat(" ", pad) + cmds)
+	pad := max(width-lipgloss.Width(mode)-lipgloss.Width(hints)-lipgloss.Width(nav)-4, 1)
+	line := mode + "  │  " + hints + strings.Repeat(" ", pad) + "│  " + nav
+	return StatusBarStyle.Width(width).Render(line)
+}
+
+func (m *Model) renderKeyHints() string {
+	blocked := m.selectedNodeBlocked()
+	attach := GrayStyle.Render("a:attach")
+	approve := GrayStyle.Render("p:approve")
+	reject := GrayStyle.Render("r:reject")
+	if blocked {
+		approve = YellowStyle.Bold(true).Render("p:approve")
+		reject = YellowStyle.Bold(true).Render("r:reject")
+	}
+	rest := GrayStyle.Render("R:retry  f:filter  ?:help  q:quit")
+	return attach + "  " + approve + "  " + reject + "  " + rest
+}
+
+func (m *Model) selectedNodeBlocked() bool {
+	for _, n := range m.wf.Nodes {
+		if n.NodeId == m.ui.SelectedNode {
+			return isBlocked(n)
+		}
+	}
+	return false
 }
 
 func focusLabel(f FocusTarget) string {
@@ -583,6 +645,26 @@ func focusLabel(f FocusTarget) string {
 		return GrayStyle.Render("NORMAL") + " " + WhiteStyle.Render("inspector")
 	}
 	return ""
+}
+
+// ── Help overlay ────────────────────────────────────────────────────
+
+func (m *Model) renderHelpOverlay() string {
+	lines := []string{
+		"┌── Keys ────────────────────────────────┐",
+		"│  j/k ↑↓   navigate                     │",
+		"│  Tab      cycle panels                 │",
+		"│  Enter    inspect selection            │",
+		"│  a        attach                       │",
+		"│  p / r    approve / reject             │",
+		"│  R        retry                        │",
+		"│  f        filter                       │",
+		"│  ?        toggle this help             │",
+		"│  :        command mode                 │",
+		"│  q / Esc  quit (closes overlay first)  │",
+		"└────────────────────────────────────────┘",
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ── Filter overlay ──────────────────────────────────────────────────

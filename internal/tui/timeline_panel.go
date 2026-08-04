@@ -95,7 +95,11 @@ func (p *TimelinePanel) View(width, height int) string {
 	p.viewport.Height = height - 4
 
 	var sb strings.Builder
-	sb.WriteString(HeaderStyle.Render("TIMELINE"))
+	title := "TIMELINE"
+	if p.focused {
+		title = "TIMELINE *"
+	}
+	sb.WriteString(HeaderStyle.Render(title))
 	sb.WriteString("\n")
 	sb.WriteString(strings.Repeat("─", width-2))
 	sb.WriteString("\n\n")

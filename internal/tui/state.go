@@ -51,6 +51,7 @@ type UIState struct {
 	InspectorTab  InspectorTab
 	FilterOpen    bool
 	FilterState   FilterState
+	HelpOpen      bool
 	CommandMode   bool
 	CommandInput  string
 	Width         int

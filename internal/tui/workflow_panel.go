@@ -90,8 +90,12 @@ func (p *WorkflowPanel) View(width, height int) string {
 	cyan := lipgloss.NewStyle().Foreground(Cyan).Bold(true)
 	gray := lipgloss.NewStyle().Foreground(Gray)
 
-	// ┌─ WORKFLOW ──────────────────┐
-	sb.WriteString(boxLine("┌─ "+cyan.Render("WORKFLOW"), "─", "┐", w))
+	// ┌─ WORKFLOW ──────────────────┐  (* when focused)
+	title := "WORKFLOW"
+	if p.focused {
+		title = "WORKFLOW *"
+	}
+	sb.WriteString(boxLine("┌─ "+cyan.Render(title), "─", "┐", w))
 
 	// │ Task: wf-xxx               │
 	sb.WriteString(boxLine("│ "+gray.Render("Task:")+" "+WhiteStyle.Render(p.wfID), " ", "│", w))

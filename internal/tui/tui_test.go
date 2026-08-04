@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
 )
 
@@ -119,6 +120,28 @@ func TestAttachCommandNoArgs(t *testing.T) {
 	}
 }
 
+func TestAttachCommandUsesSelectedNode(t *testing.T) {
+	r := NewCommandRegistry()
+	ctx := &AppContext{
+		UIState: &UIState{SelectedNode: "analyze"},
+		Workflow: &WorkflowState{Nodes: []*arlov1.NodeState{
+			{NodeId: "analyze", SessionId: "sess-1"},
+		}},
+	}
+	cmd := r.Execute("attach", ctx)
+	if cmd == nil {
+		t.Fatal("expected cmd")
+	}
+	msg := cmd()
+	am, ok := msg.(attachMsg)
+	if !ok {
+		t.Fatalf("got %T, want attachMsg", msg)
+	}
+	if am.nodeID != "analyze" || am.sessionID != "sess-1" {
+		t.Fatalf("got %+v", am)
+	}
+}
+
 func TestAttachCommandNodeNotFound(t *testing.T) {
 	ctx := &AppContext{
 		Client:   &Client{},
@@ -194,6 +217,84 @@ func TestCommandRegistryUnknownCommand(t *testing.T) {
 	cm := msg.(commandMsg)
 	if !strings.Contains(cm.output, "unknown command") {
 		t.Errorf("got %q, want 'unknown command'", cm.output)
+	}
+}
+
+// ── Phase 1 single-key interaction ─────────────────
+
+func TestSingleKeyApproveDispatches(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ui.SelectedNode = "n1"
+	m.wf.Nodes = []*arlov1.NodeState{{NodeId: "n1", Status: "WAITING", Gate: "human_approval"}}
+	cmd := m.runRegistryCommand("approve")
+	if cmd == nil {
+		t.Fatal("expected tea.Cmd")
+	}
+}
+
+func TestQuestionMarkTogglesHelp(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ready = true
+	m.ui.Width, m.ui.Height = 120, 40
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	mod := updated.(*Model)
+	if !mod.ui.HelpOpen {
+		t.Fatal("expected HelpOpen")
+	}
+	updated, _ = mod.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	mod = updated.(*Model)
+	if mod.ui.HelpOpen {
+		t.Fatal("expected HelpOpen closed")
+	}
+}
+
+func TestEscClosesHelpBeforeQuit(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ui.HelpOpen = true
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mod := updated.(*Model)
+	if mod.ui.HelpOpen {
+		t.Fatal("help should close")
+	}
+	if mod.quitting {
+		t.Fatal("should not quit while closing help")
+	}
+}
+
+func TestStatusBarShowsSingleKeyHints(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ready = true
+	m.ui.Width, m.ui.Height = 120, 40
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "a:attach") {
+		t.Fatalf("missing a:attach in view:\n%s", view)
+	}
+	if strings.Contains(view, ":a[ttach]") {
+		t.Fatal("old colon-hint style still present")
+	}
+}
+
+func TestHelpOverlayVisible(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ready = true
+	m.ui.HelpOpen = true
+	m.ui.Width, m.ui.Height = 120, 40
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "attach") {
+		t.Fatalf("help overlay missing attach binding:\n%s", view)
+	}
+	if !strings.Contains(view, "Keys") {
+		t.Fatalf("help overlay missing Keys header:\n%s", view)
+	}
+}
+
+func TestWorkflowFocusMark(t *testing.T) {
+	m := New("/tmp/x.sock", "wf-1")
+	m.ready = true
+	m.ui.Width, m.ui.Height = 120, 40
+	view := stripAnsi(m.View())
+	if !strings.Contains(view, "WORKFLOW *") {
+		t.Fatalf("expected focused workflow mark:\n%s", view)
 	}
 }
 

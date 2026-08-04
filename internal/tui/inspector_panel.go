@@ -118,8 +118,11 @@ func (p *InspectorPanel) View(width, height int) string {
 
 	var sb strings.Builder
 
-	// Title on its own line — HeaderStyle.MarginBottom used to scramble the tab bar.
-	sb.WriteString(CyanStyle.Bold(true).Render("NODE INSPECTOR"))
+	title := "NODE INSPECTOR"
+	if p.focused {
+		title = "NODE INSPECTOR *"
+	}
+	sb.WriteString(CyanStyle.Bold(true).Render(title))
 	sb.WriteString("\n")
 	sb.WriteString(p.renderTabBar())
 	sb.WriteString("\n")
