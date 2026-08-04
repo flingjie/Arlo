@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -159,29 +160,28 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		return
 	}
 
+	graph := r.graphRegistry[workflowID]
+	if graph == nil {
+		return
+	}
+	// Build node lookup for retry policy.
+	nodeMap := make(map[string]domain.ExecutableNode, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		nodeMap[n.ID] = n
+	}
+
 	for _, ns := range state.Nodes {
 		if ns.Status != domain.NodeStatusRunning {
 			continue
 		}
-		instanceID := fmt.Sprintf("rt-%s-%d", ns.NodeID, ns.RetryCount+1)
+		instanceID := mkInstanceID(ns.NodeID, ns.RetryCount+1)
 		inst, err := r.runtimeMgr.GetInstance(ctx, instanceID)
 		if err != nil {
-			continue // instance may not have been started yet
+			continue
 		}
 		if inst.State != domain.RuntimeStateExited {
 			continue
 		}
-
-		success := inst.ExitCode == 0
-		slog.Info("runtime exited",
-			"workflow", workflowID,
-			"node", ns.NodeID,
-			"exit_code", inst.ExitCode,
-			"tokens_in", inst.Metrics.TokensIn,
-			"tokens_out", inst.Metrics.TokensOut,
-			"tool_calls", inst.Metrics.ToolCalls,
-			"duration_ms", inst.Metrics.DurationMs,
-		)
 
 		// Emit metrics snapshot.
 		r.emitNodeEvent(ctx, workflowID, ns, store.EventMetricsSnapshot,
@@ -195,14 +195,31 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 				DurationMs: inst.Metrics.DurationMs,
 			})
 
-		if success {
+		if inst.ExitCode == 0 {
+			slog.Info("runtime exited",
+				"workflow", workflowID,
+				"node", ns.NodeID,
+				"exit_code", inst.ExitCode,
+				"tokens_in", inst.Metrics.TokensIn,
+				"tokens_out", inst.Metrics.TokensOut,
+				"tool_calls", inst.Metrics.ToolCalls,
+				"duration_ms", inst.Metrics.DurationMs,
+			)
 			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeCompleted,
 				domain.NodeCompleted{
 					NodeID:     ns.NodeID,
 					WorkflowID: workflowID,
 					SessionID:  ns.SessionID,
 				})
-		} else if ns.RetryCount < 1 { // one retry
+			continue
+		}
+
+		// Use the node's max_retries from the graph, not a hardcoded value.
+		maxRetries := 0
+		if gn, ok := nodeMap[ns.NodeID]; ok {
+			maxRetries = gn.Retry.MaxRetries
+		}
+		if ns.RetryCount < maxRetries {
 			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
 				domain.NodeFailed{
 					NodeID:     ns.NodeID,
@@ -224,12 +241,22 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 	}
 }
 
+// mkSessionID builds a session identifier for a node attempt.
+func mkSessionID(nodeID string, attempt int) string {
+	return fmt.Sprintf("sess-%s-%d", nodeID, attempt)
+}
+
+// mkInstanceID builds a runtime instance identifier for a node attempt.
+func mkInstanceID(nodeID string, attempt int) string {
+	return fmt.Sprintf("rt-%s-%d", nodeID, attempt)
+}
+
 // emitNodeEvent appends a node event and applies it to projections.
 func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns domain.NodeState, eventType store.EventType, payload interface{}) {
 	data, _ := json.Marshal(payload)
 
 	event := store.Event{
-		ID:       fmt.Sprintf("evt-reap-%s-%d", ns.NodeID, time.Now().UnixNano()),
+		ID:       fmt.Sprintf("evt-%s-%s-%d", strings.ToLower(string(eventType)), ns.NodeID, time.Now().UnixNano()),
 		Type:     eventType,
 		StreamID: "node-" + ns.NodeID,
 		Payload:  data,
@@ -242,6 +269,46 @@ func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns do
 	event.Position = positions[0]
 	if err := r.stateStore.Apply(event); err != nil {
 		slog.Error("reap: apply event failed", "node", ns.NodeID, "error", err)
+	}
+}
+
+// launchRuntime resolves the skill prompt and starts the runtime process for a node.
+func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID string, retryCount int) {
+	if r.runtimeMgr == nil {
+		return
+	}
+	graph := r.graphRegistry[workflowID]
+	if graph == nil {
+		return
+	}
+	for _, n := range graph.Nodes {
+		if n.ID != nodeID {
+			continue
+		}
+
+		prompt := "Run skill: " + n.SkillRef.Name
+		if r.skillRegistry != nil {
+			if sk, err := r.skillRegistry.Resolve(n.SkillRef); err == nil && sk.Prompt != "" {
+				prompt = sk.Prompt
+			}
+		}
+
+		sessionID := mkSessionID(nodeID, retryCount+1)
+		_, err := r.runtimeMgr.StartInstance(ctx, runtime.RuntimeSpec{
+			InstanceID: mkInstanceID(nodeID, retryCount+1),
+			Type:       n.Runtime.Provider,
+			Config: domain.RuntimeConfig{
+				Model:          n.Runtime.Model,
+				PermissionMode: "auto",
+			},
+			SessionID: sessionID,
+			WorkDir:    "/tmp",
+			Prompt:     prompt,
+		})
+		if err != nil {
+			slog.Warn("failed to launch runtime", "node", nodeID, "error", err)
+		}
+		return
 	}
 }
 
@@ -283,7 +350,7 @@ func (r *Reconciler) executeRetryNode(ctx context.Context, workflowID string, d 
 		return nil
 	}
 
-	sessionID := fmt.Sprintf("sess-%s-%d", d.NodeID, ns.RetryCount+1)
+	sessionID := mkSessionID(d.NodeID, ns.RetryCount+1)
 
 	payload, _ := json.Marshal(domain.NodeStarted{
 		NodeID:     d.NodeID,
@@ -313,6 +380,8 @@ func (r *Reconciler) executeRetryNode(ctx context.Context, workflowID string, d 
 		"attempt", ns.RetryCount+1,
 		"reason", d.Reason,
 	)
+
+	r.launchRuntime(ctx, workflowID, d.NodeID, ns.RetryCount)
 	return nil
 }
 
@@ -334,7 +403,7 @@ func (r *Reconciler) executeResumeNode(ctx context.Context, workflowID string, d
 	// Reuse the existing session ID if available, otherwise create new.
 	sessionID := ns.SessionID
 	if sessionID == "" {
-		sessionID = fmt.Sprintf("sess-%s-%d", d.NodeID, time.Now().UnixNano())
+		sessionID = mkSessionID(d.NodeID, ns.RetryCount+1)
 	}
 
 	payload, _ := json.Marshal(domain.NodeStarted{
@@ -364,6 +433,9 @@ func (r *Reconciler) executeResumeNode(ctx context.Context, workflowID string, d
 		"session", sessionID,
 		"reason", d.Reason,
 	)
+
+	// Launch the runtime after resume (e.g., after human approval).
+	r.launchRuntime(ctx, workflowID, d.NodeID, ns.RetryCount)
 	return nil
 }
 
@@ -414,9 +486,8 @@ func (r *Reconciler) executePauseNode(ctx context.Context, workflowID string, d 
 	return nil
 }
 
-// executeStartNode transitions a node from PENDING/READY to RUNNING.
-// In v0.1, this only appends NODE_STARTED. The actual agent launch (Step 6)
-// will be added later.
+// executeStartNode transitions a node from PENDING/READY to RUNNING,
+// handles human_approval gate pausing, and launches the agent runtime.
 func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d domain.Decision) error {
 	// Verify the node is actually in a startable state.
 	ns, err := r.stateStore.GetNodeState(ctx, d.NodeID)
@@ -433,7 +504,7 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 		return nil
 	}
 
-	sessionID := fmt.Sprintf("sess-%s-%d", d.NodeID, ns.RetryCount+1)
+	sessionID := mkSessionID(d.NodeID, ns.RetryCount+1)
 
 	// Append NODE_STARTED event.
 	payload, _ := json.Marshal(domain.NodeStarted{
@@ -466,40 +537,41 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 		"reason", d.Reason,
 	)
 
-	// Actually launch the agent runtime.
-	if r.runtimeMgr != nil {
-		graph := r.graphRegistry[workflowID]
-		if graph != nil {
-			for _, n := range graph.Nodes {
-				if n.ID == d.NodeID {
-					// Resolve the skill to get the actual prompt.
-					prompt := "Run skill: " + n.SkillRef.Name
-					if r.skillRegistry != nil {
-						if sk, err := r.skillRegistry.Resolve(n.SkillRef); err == nil && sk.Prompt != "" {
-							prompt = sk.Prompt
-						}
-					}
+	// If the node has a human_approval gate, pause it immediately
+	// before launching the runtime. The node stays WAITING until approved.
+	if ns.Gate == string(domain.GateHumanApproval) {
+		slog.Info("node paused for human approval",
+			"workflow", workflowID,
+			"node", d.NodeID,
+			"gate", ns.Gate,
+		)
 
-					_, err := r.runtimeMgr.StartInstance(ctx, runtime.RuntimeSpec{
-						InstanceID:  fmt.Sprintf("rt-%s-%d", d.NodeID, ns.RetryCount+1),
-						Type:        n.Runtime.Provider,
-						Config: domain.RuntimeConfig{
-							Model:          n.Runtime.Model,
-							PermissionMode: "auto",
-						},
-						SessionID: sessionID,
-						WorkDir:    "/tmp",
-						Prompt:     prompt,
-					})
-					if err != nil {
-						slog.Warn("failed to launch runtime", "node", d.NodeID, "error", err)
-					}
-					break
-				}
-			}
+		waitPayload, _ := json.Marshal(domain.NodeWaiting{
+			NodeID:     d.NodeID,
+			WorkflowID: workflowID,
+			SessionID:  sessionID,
+			Reason:     "human_approval gate",
+			Prompt:     "Approve or reject this node",
+		})
+		waitEvent := store.Event{
+			ID:       fmt.Sprintf("evt-nw-%s-%d", d.NodeID, time.Now().UnixNano()),
+			Type:     store.EventNodeWaiting,
+			StreamID: "node-" + d.NodeID,
+			Payload:  waitPayload,
 		}
+		waitPositions, waitErr := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{waitEvent})
+		if waitErr != nil {
+			return fmt.Errorf("start node: append NODE_WAITING for %s: %w", d.NodeID, waitErr)
+		}
+		waitEvent.Position = waitPositions[0]
+		if err := r.stateStore.Apply(waitEvent); err != nil {
+			return fmt.Errorf("start node: apply NODE_WAITING for %s: %w", d.NodeID, err)
+		}
+		return nil // Don't launch runtime — wait for human approval.
 	}
 
+	// Actually launch the agent runtime.
+	r.launchRuntime(ctx, workflowID, d.NodeID, ns.RetryCount)
 	return nil
 }
 

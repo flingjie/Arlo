@@ -185,13 +185,32 @@ func TestReconcileChain(t *testing.T) {
 	})
 	ss.Rebuild(ctx)
 
-	// Step 5: Reconcile → review should now start.
+	// Step 5: Reconcile → review should now start, then pause for gate.
 	r.Reconcile(ctx, wfID)
 	ss.Rebuild(ctx)
 
 	ns, _ = ss.GetNodeState(ctx, "review")
+	// Gated nodes go START → WAITING immediately, skipping the runtime.
+	if ns.Status != domain.NodeStatusWaiting {
+		t.Fatalf("step 5: review status = %s, want WAITING (gate)", ns.Status)
+	}
+
+	// Step 5b: Approve the review gate.
+	appendEvent(t, es, "node-review", store.EventHumanInputReceived, domain.HumanInputReceived{
+		NodeID: "review", WorkflowID: wfID, Decision: "approve",
+	})
+	ss.Rebuild(ctx)
+	ns, _ = ss.GetNodeState(ctx, "review")
+	if ns.Status != domain.NodeStatusReady {
+		t.Fatalf("step 5b: review status = %s, want READY after approve", ns.Status)
+	}
+
+	// Step 5c: Reconcile → resume the review node.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+	ns, _ = ss.GetNodeState(ctx, "review")
 	if ns.Status != domain.NodeStatusRunning {
-		t.Fatalf("step 5: review status = %s, want RUNNING", ns.Status)
+		t.Fatalf("step 5c: review status = %s, want RUNNING after resume", ns.Status)
 	}
 
 	// Step 6: Complete review.
@@ -515,7 +534,7 @@ func TestReconcilePauseNode(t *testing.T) {
 	r.Reconcile(ctx, wfID)
 	ss.Rebuild(ctx)
 
-	// Complete implement → review starts and has gate=human_approval.
+	// Complete implement → review starts and immediately pauses for gate.
 	ns2, _ := ss.GetNodeState(ctx, "implement")
 	appendEvent(t, es, "node-implement", store.EventNodeCompleted, domain.NodeCompleted{
 		NodeID: "implement", SessionID: ns2.SessionID,
@@ -524,20 +543,10 @@ func TestReconcilePauseNode(t *testing.T) {
 	r.Reconcile(ctx, wfID)
 	ss.Rebuild(ctx)
 
-	// Verify review is RUNNING (it was started).
+	// Verify review is WAITING (started then immediately paused for gate).
 	review, _ := ss.GetNodeState(ctx, "review")
-	if review.Status != domain.NodeStatusRunning {
-		t.Fatalf("review status = %s after start, want RUNNING", review.Status)
-	}
-
-	// Now reconcile again — engine should detect review has a gate and emit PAUSE_NODE.
-	r.Reconcile(ctx, wfID)
-	ss.Rebuild(ctx)
-
-	// review should now be WAITING (paused for human approval).
-	review, _ = ss.GetNodeState(ctx, "review")
 	if review.Status != domain.NodeStatusWaiting {
-		t.Errorf("review status = %s after pause, want WAITING", review.Status)
+		t.Fatalf("review status = %s after start+gate pause, want WAITING", review.Status)
 	}
 }
 
@@ -568,26 +577,25 @@ func TestReconcileResumeNode(t *testing.T) {
 	}
 	ss.Rebuild(ctx)
 
-	// Start review (needs to be RUNNING first to get paused).
+	// Start review — executes tartNode will pause it immediately for the gate.
 	r.Reconcile(ctx, wfID)
 	ss.Rebuild(ctx)
 
 	review, _ := ss.GetNodeState(ctx, "review")
-	if review.Status != domain.NodeStatusRunning {
-		// If not running yet, force it to RUNNING via event.
+	// Gate handled inline: START → WAITING immediately, gate cleared.
+	if review.Status != domain.NodeStatusWaiting {
+		// Force WAITING if the inline gate didn't fire (e.g., if test env differs).
 		appendEvent(t, es, "node-review", store.EventNodeStarted, domain.NodeStarted{
-			NodeID: "review", SessionID: "sess-review",
+			NodeID: "review", WorkflowID: wfID, SessionID: "sess-review",
+		})
+		appendEvent(t, es, "node-review", store.EventNodeWaiting, domain.NodeWaiting{
+			NodeID: "review", WorkflowID: wfID, SessionID: "sess-review", Reason: "human_approval",
 		})
 		ss.Rebuild(ctx)
-	}
-
-	// Pause review (gate=human_approval in YAML) → PAUSE_NODE decision.
-	r.Reconcile(ctx, wfID)
-	ss.Rebuild(ctx)
-
-	review, _ = ss.GetNodeState(ctx, "review")
-	if review.Status != domain.NodeStatusWaiting {
-		t.Fatalf("review should be WAITING after pause, got %s", review.Status)
+		review, _ = ss.GetNodeState(ctx, "review")
+		if review.Status != domain.NodeStatusWaiting {
+			t.Fatalf("review should be WAITING after gate, got %s", review.Status)
+		}
 	}
 
 	// Human approves → status becomes READY.
@@ -758,40 +766,38 @@ func TestReconcileFullWorkflowLifecycle(t *testing.T) {
 		t.Errorf("phase 3: retry_count = %d, want >= 1", implement.RetryCount)
 	}
 
-	// Phase 4: Complete implement → review starts (with gate).
+	// Phase 4: Complete implement → review starts and immediately pauses for gate.
 	appendEvent(t, es, "node-implement", store.EventNodeCompleted, domain.NodeCompleted{
 		NodeID: "implement", SessionID: implement.SessionID,
 	})
 	ss.Rebuild(ctx)
-	r.Reconcile(ctx, wfID) // starts review
+	r.Reconcile(ctx, wfID) // starts review, pauses for gate
 	ss.Rebuild(ctx)
 
 	review, _ := ss.GetNodeState(ctx, "review")
-	if review.Status != domain.NodeStatusRunning {
-		t.Fatalf("phase 4: review = %s after start, want RUNNING", review.Status)
-	}
-
-	// Phase 5: PAUSE — review has gate, should pause.
-	r.Reconcile(ctx, wfID)
-	ss.Rebuild(ctx)
-	review, _ = ss.GetNodeState(ctx, "review")
 	if review.Status != domain.NodeStatusWaiting {
-		t.Fatalf("phase 5: review = %s after pause, want WAITING", review.Status)
+		t.Fatalf("phase 4: review = %s after start+gate, want WAITING", review.Status)
 	}
 
-	// Phase 6: Human approves (human input → READY) → RESUME.
+	// Phase 5: Approve the gate → review resumes.
 	appendEvent(t, es, "node-review", store.EventHumanInputReceived, domain.HumanInputReceived{
-		NodeID: "review", WorkflowID: wfID, SessionID: review.SessionID, Decision: "approve",
+		NodeID: "review", WorkflowID: wfID, Decision: "approve",
 	})
 	ss.Rebuild(ctx)
+	review, _ = ss.GetNodeState(ctx, "review")
+	if review.Status != domain.NodeStatusReady {
+		t.Fatalf("phase 5: review = %s after approve, want READY", review.Status)
+	}
+
+	// Reconcile → resume review.
 	r.Reconcile(ctx, wfID)
 	ss.Rebuild(ctx)
 	review, _ = ss.GetNodeState(ctx, "review")
 	if review.Status != domain.NodeStatusRunning {
-		t.Fatalf("phase 6: review = %s after resume, want RUNNING", review.Status)
+		t.Fatalf("phase 5b: review = %s after resume, want RUNNING", review.Status)
 	}
 
-	// Phase 7: Complete review → workflow completes.
+	// Phase 6: Complete review → workflow completes.
 	appendEvent(t, es, "node-review", store.EventNodeCompleted, domain.NodeCompleted{
 		NodeID: "review", SessionID: review.SessionID,
 	})

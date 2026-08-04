@@ -460,6 +460,7 @@ func (p *workflowProjection) applyNodeWaiting(event store.Event) error {
 		return fmt.Errorf("NodeWaiting: %w", err)
 	}
 	ns.Status = domain.NodeStatusWaiting
+	ns.Gate = "" // gate satisfied — clear to prevent re-pausing after resume
 	wf.Nodes[payload.NodeID] = *ns
 	return nil
 }

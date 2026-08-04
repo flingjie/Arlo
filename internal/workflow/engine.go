@@ -54,6 +54,9 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 			MaxRetries:    nd.Retry.MaxRetries,
 			BackoffFactor: 2.0,
 		}
+		if retry.MaxRetries == 0 {
+			retry.MaxRetries = 1 // default: one retry
+		}
 		if nd.Retry.Backoff != "" {
 			d, err := time.ParseDuration(nd.Retry.Backoff)
 			if err != nil {
@@ -241,13 +244,18 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 		startedNodes[ns.NodeID] = true
 	}
 
-	// Find running nodes with human_approval gates that should be paused.
+	// Safety net: pause any RUNNING nodes that have a gate.
+	// Normally executeStartNode pauses gated nodes immediately, but this
+	// catches nodes that reach RUNNING via event replay or manual injection.
 	for _, ns := range state.Nodes {
 		if ns.Status != domain.NodeStatusRunning {
 			continue
 		}
 		if ns.Gate == "" || ns.Gate == string(domain.GateNone) {
 			continue
+		}
+		if startedNodes[ns.NodeID] {
+			continue // already getting START_NODE — don't conflict
 		}
 		decisions = append(decisions, domain.Decision{
 			Action: domain.DecisionPauseNode,
