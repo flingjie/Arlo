@@ -506,6 +506,39 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 
 	sessionID := mkSessionID(d.NodeID, ns.RetryCount+1)
 
+	// If the node has a human_approval gate, go straight to WAITING —
+	// no NODE_STARTED, no runtime. On resume, NODE_STARTED fires once.
+	if ns.Gate == string(domain.GateHumanApproval) {
+		slog.Info("node waiting for human approval",
+			"workflow", workflowID,
+			"node", d.NodeID,
+			"gate", ns.Gate,
+		)
+
+		waitPayload, _ := json.Marshal(domain.NodeWaiting{
+			NodeID:     d.NodeID,
+			WorkflowID: workflowID,
+			SessionID:  sessionID,
+			Reason:     "human_approval gate",
+			Prompt:     "Approve or reject this node",
+		})
+		waitEvent := store.Event{
+			ID:       fmt.Sprintf("evt-nw-%s-%d", d.NodeID, time.Now().UnixNano()),
+			Type:     store.EventNodeWaiting,
+			StreamID: "node-" + d.NodeID,
+			Payload:  waitPayload,
+		}
+		waitPositions, waitErr := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{waitEvent})
+		if waitErr != nil {
+			return fmt.Errorf("start node: append NODE_WAITING for %s: %w", d.NodeID, waitErr)
+		}
+		waitEvent.Position = waitPositions[0]
+		if err := r.stateStore.Apply(waitEvent); err != nil {
+			return fmt.Errorf("start node: apply NODE_WAITING for %s: %w", d.NodeID, err)
+		}
+		return nil
+	}
+
 	// Append NODE_STARTED event.
 	payload, _ := json.Marshal(domain.NodeStarted{
 		NodeID:     d.NodeID,
@@ -536,39 +569,6 @@ func (r *Reconciler) executeStartNode(ctx context.Context, workflowID string, d 
 		"session", sessionID,
 		"reason", d.Reason,
 	)
-
-	// If the node has a human_approval gate, pause it immediately
-	// before launching the runtime. The node stays WAITING until approved.
-	if ns.Gate == string(domain.GateHumanApproval) {
-		slog.Info("node paused for human approval",
-			"workflow", workflowID,
-			"node", d.NodeID,
-			"gate", ns.Gate,
-		)
-
-		waitPayload, _ := json.Marshal(domain.NodeWaiting{
-			NodeID:     d.NodeID,
-			WorkflowID: workflowID,
-			SessionID:  sessionID,
-			Reason:     "human_approval gate",
-			Prompt:     "Approve or reject this node",
-		})
-		waitEvent := store.Event{
-			ID:       fmt.Sprintf("evt-nw-%s-%d", d.NodeID, time.Now().UnixNano()),
-			Type:     store.EventNodeWaiting,
-			StreamID: "node-" + d.NodeID,
-			Payload:  waitPayload,
-		}
-		waitPositions, waitErr := r.eventStore.Append(ctx, "node-"+d.NodeID, []store.Event{waitEvent})
-		if waitErr != nil {
-			return fmt.Errorf("start node: append NODE_WAITING for %s: %w", d.NodeID, waitErr)
-		}
-		waitEvent.Position = waitPositions[0]
-		if err := r.stateStore.Apply(waitEvent); err != nil {
-			return fmt.Errorf("start node: apply NODE_WAITING for %s: %w", d.NodeID, err)
-		}
-		return nil // Don't launch runtime — wait for human approval.
-	}
 
 	// Actually launch the agent runtime.
 	r.launchRuntime(ctx, workflowID, d.NodeID, ns.RetryCount)
