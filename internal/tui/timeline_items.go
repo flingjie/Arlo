@@ -204,6 +204,24 @@ func (i MetricsSnapshotItem) Render() string {
 		i.NodeID, i.TokensIn, i.TokensOut, i.ToolCalls, formatDur(i.DurationMs))
 }
 
+// ── Artifact items ─────────────────────────────────
+
+type ArtifactCreatedItem struct {
+	Timestamp  time.Time
+	NodeID     string
+	ArtifactID string
+	Name       string
+}
+
+func (i ArtifactCreatedItem) Time() time.Time { return i.Timestamp }
+func (i ArtifactCreatedItem) Level() Level    { return INFO }
+func (i ArtifactCreatedItem) Render() string {
+	if i.Name != "" {
+		return fmt.Sprintf("%s artifact created: %s (%s)", i.NodeID, i.Name, truncateID(i.ArtifactID))
+	}
+	return fmt.Sprintf("%s artifact created: %s", i.NodeID, truncateID(i.ArtifactID))
+}
+
 // ── Generic fallback ──────────────────────────────
 
 type GenericEventItem struct {
@@ -264,6 +282,9 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 	case "METRICS_SNAPSHOT":
 		ti, to, tc, dur := extractMetrics(event)
 		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: ti, TokensOut: to, ToolCalls: tc, DurationMs: dur}
+	case "ARTIFACT_CREATED":
+		artID, artName := extractArtifact(event)
+		return ArtifactCreatedItem{Timestamp: t, NodeID: nodeID, ArtifactID: artID, Name: artName}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
@@ -319,6 +340,22 @@ func extractMetrics(event *arlov1.Event) (tokensIn, tokensOut int64, toolCalls i
 	}
 	_ = json.Unmarshal(event.Payload, &payload)
 	return payload.TokensIn, payload.TokensOut, payload.ToolCalls, payload.DurationMs
+}
+
+func extractArtifact(event *arlov1.Event) (artifactID, name string) {
+	var payload struct {
+		ArtifactID string `json:"artifact_id"`
+		Name       string `json:"name"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	return payload.ArtifactID, payload.Name
+}
+
+func truncateID(id string) string {
+	if len(id) > 12 {
+		return id[:12] + "..."
+	}
+	return id
 }
 
 func formatDur(ms int64) string {

@@ -19,6 +19,9 @@ type InspectorPanel struct {
 	// Event log buffer: nodeID → log lines for the Logs tab.
 	nodeEvents map[string][]TimelineItem
 
+	// Latest metrics snapshot per node (for the Metrics tab).
+	latestMetrics map[string]MetricsSnapshotItem
+
 	// Dispatcher subscription.
 	dispatcher *Dispatcher
 	sub        Subscriber
@@ -27,9 +30,10 @@ type InspectorPanel struct {
 // NewInspectorPanel creates a new inspector panel.
 func NewInspectorPanel(dispatcher *Dispatcher) *InspectorPanel {
 	return &InspectorPanel{
-		tab:        TabSummary,
-		dispatcher: dispatcher,
-		nodeEvents: make(map[string][]TimelineItem),
+		tab:           TabSummary,
+		dispatcher:    dispatcher,
+		nodeEvents:    make(map[string][]TimelineItem),
+		latestMetrics: make(map[string]MetricsSnapshotItem),
 	}
 }
 
@@ -59,6 +63,10 @@ func (p *InspectorPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 				p.nodeEvents[nodeID] = p.nodeEvents[nodeID][len(p.nodeEvents[nodeID])-200:]
 			}
 		}
+		// Cache latest metrics snapshot per node.
+		if m, ok := msg.Item.(MetricsSnapshotItem); ok {
+			p.latestMetrics[m.NodeID] = m
+		}
 		return nil, true
 	case InternalEvent:
 		return p.listenDispatcher, true
@@ -84,6 +92,8 @@ func extractNodeIDFromItem(item TimelineItem) string {
 	case NodeHeartbeatItem:
 		return it.NodeID
 	case MetricsSnapshotItem:
+		return it.NodeID
+	case ArtifactCreatedItem:
 		return it.NodeID
 	}
 	return ""
@@ -255,20 +265,138 @@ func (p *InspectorPanel) renderLogs(sb *strings.Builder) {
 	}
 }
 
-// ── Stub Tabs ─────────────────────────────────────
-
-func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
-	sb.WriteString(GrayStyle.Render("  Prompt tab — coming in v1.1"))
-	sb.WriteString("\n")
-}
-
-func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
-	sb.WriteString(GrayStyle.Render("  Artifacts tab — coming in v1.1"))
-	sb.WriteString("\n")
-}
+// ── Metrics Tab ──────────────────────────────────
 
 func (p *InspectorPanel) renderMetrics(sb *strings.Builder) {
-	sb.WriteString(GrayStyle.Render("  Metrics tab — coming in v1.1"))
+	m, ok := p.latestMetrics[p.node.NodeId]
+	if !ok {
+		sb.WriteString(GrayStyle.Render("  No metrics yet — data will appear when the node runs.\n"))
+		return
+	}
+
+	// Token usage with visual bars.
+	maxTokens := max(m.TokensIn, m.TokensOut)
+	if maxTokens < 100 {
+		maxTokens = 100
+	}
+	barW := 20
+
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tokens In"), WhiteStyle.Render(fmt.Sprintf("%d", m.TokensIn))))
+	sb.WriteString(fmt.Sprintf("  %-12s  %s %s\n", "", GrayStyle.Render("│"), tokenBar(m.TokensIn, maxTokens, barW)))
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tokens Out"), WhiteStyle.Render(fmt.Sprintf("%d", m.TokensOut))))
+	sb.WriteString(fmt.Sprintf("  %-12s  %s %s\n", "", GrayStyle.Render("│"), tokenBar(m.TokensOut, maxTokens, barW)))
+	sb.WriteString("\n")
+
+	if m.TokensIn+m.TokensOut > 0 {
+		total := m.TokensIn + m.TokensOut
+		cost := float64(m.TokensIn)/1_000_000*3 + float64(m.TokensOut)/1_000_000*15
+		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Total"), WhiteStyle.Render(fmt.Sprintf("%d tokens", total))))
+		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Est. Cost"), YellowStyle.Render(fmt.Sprintf("$%.4f", cost))))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tool Calls"), WhiteStyle.Render(fmt.Sprintf("%d", m.ToolCalls))))
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Duration"), WhiteStyle.Render(formatDur(m.DurationMs))))
+
+	sb.WriteString("\n")
+	sb.WriteString(GrayStyle.Render("  Token pricing: $3/M in, $15/M out (Claude Sonnet)"))
+	sb.WriteString("\n")
+}
+
+func tokenBar(value, maxValue int64, width int) string {
+	if maxValue <= 0 {
+		return ""
+	}
+	filled := int(float64(value) / float64(maxValue) * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return GreenStyle.Render(strings.Repeat("█", filled)) +
+		ProgressEmpty.Render(strings.Repeat("░", width-filled))
+}
+
+// ── Artifacts Tab ────────────────────────────────
+
+func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
+	events := p.nodeEvents[p.node.NodeId]
+	var artifacts []ArtifactCreatedItem
+	for _, e := range events {
+		if a, ok := e.(ArtifactCreatedItem); ok {
+			artifacts = append(artifacts, a)
+		}
+	}
+
+	if len(artifacts) == 0 {
+		sb.WriteString(GrayStyle.Render("  No artifacts yet.\n"))
+		sb.WriteString(GrayStyle.Render("  Artifacts are created when a node completes with output files.\n"))
+		sb.WriteString(GrayStyle.Render("  Try: arlo artifacts <task-id>\n"))
+		return
+	}
+
+	for _, a := range artifacts {
+		timeStr := a.Timestamp.Local().Format("15:04:05")
+		sb.WriteString(fmt.Sprintf("  %s  %s\n",
+			GrayStyle.Render(timeStr),
+			WhiteStyle.Render(fmt.Sprintf("%s  →  %s", a.Name, a.ArtifactID)),
+		))
+	}
+}
+
+// ── Prompt Tab ────────────────────────────────────
+
+func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
+	n := p.node
+
+	// Extract skill from NODE_CREATED event.
+	var skill string
+	for _, e := range p.nodeEvents[n.NodeId] {
+		if nc, ok := e.(NodeCreatedItem); ok {
+			skill = nc.Skill
+			break
+		}
+	}
+
+	sb.WriteString("  ")
+	sb.WriteString(CyanStyle.Render("── Agent Configuration"))
+	sb.WriteString(strings.Repeat("─", 28))
+	sb.WriteString("\n\n")
+
+	if skill != "" {
+		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Skill"), WhiteStyle.Render(skill)))
+	}
+	rt := n.RuntimeId
+	if rt == "" {
+		rt = "—"
+	}
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Runtime"), WhiteStyle.Render(rt)))
+
+	sb.WriteString("\n")
+	sb.WriteString("  ")
+	sb.WriteString(CyanStyle.Render("── Prompt Context"))
+	sb.WriteString(strings.Repeat("─", 32))
+	sb.WriteString("\n\n")
+
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Node ID"), WhiteStyle.Render(n.NodeId)))
+
+	gate := n.Gate
+	if gate == "" || gate == "none" {
+		gate = "none"
+	}
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Gate"), WhiteStyle.Render(gate)))
+
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Retry Max"), WhiteStyle.Render(fmt.Sprintf("%d", n.RetryCount))))
+
+	deps := strings.Join(n.DependsOn, ", ")
+	if deps == "" {
+		deps = "none"
+	}
+	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Depends On"), WhiteStyle.Render(deps)))
+
+	sb.WriteString("\n")
+	sb.WriteString(GrayStyle.Render("  The full prompt is assembled at runtime by the Claude"))
+	sb.WriteString("\n")
+	sb.WriteString(GrayStyle.Render("  Code adapter combining skill, context, and workspace state."))
 	sb.WriteString("\n")
 }
 
