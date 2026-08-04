@@ -15,7 +15,6 @@ type TimelinePanel struct {
 	Filter     FilterState
 	focused    bool
 	viewport   viewport.Model
-	sub        Subscriber
 	dispatcher *Dispatcher
 }
 
@@ -33,16 +32,8 @@ func NewTimelinePanel(dispatcher *Dispatcher) *TimelinePanel {
 	}
 }
 
-// Init subscribes to the dispatcher.
-func (p *TimelinePanel) Init() tea.Cmd {
-	p.sub = p.dispatcher.Subscribe()
-	return p.listenDispatcher
-}
-
-func (p *TimelinePanel) listenDispatcher() tea.Msg {
-	event := <-p.sub
-	return event
-}
+// Init is a no-op; the Model owns the single dispatcher subscription.
+func (p *TimelinePanel) Init() tea.Cmd { return nil }
 
 // Update handles messages.
 func (p *TimelinePanel) Update(msg tea.Msg) (tea.Cmd, bool) {
@@ -51,7 +42,7 @@ func (p *TimelinePanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 		if p.filterItem(msg.Item) {
 			p.items = append(p.items, msg.Item)
 		}
-		return p.listenDispatcher, true
+		return nil, true
 
 	case tea.KeyMsg:
 		if !p.focused {
@@ -70,9 +61,6 @@ func (p *TimelinePanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, false
 		}
 		return nil, true
-
-	case InternalEvent:
-		return p.listenDispatcher, true
 
 	case tea.WindowSizeMsg:
 		p.viewport.Width = msg.Width - 4

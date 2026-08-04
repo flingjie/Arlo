@@ -178,6 +178,29 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		instanceID := mkInstanceID(ns.NodeID, ns.RetryCount+1)
 		inst, err := r.runtimeMgr.GetInstance(ctx, instanceID)
 		if err != nil {
+			// Runtime instance not found — the process may have died without
+			// notifying MarkExited (e.g., launch failure that didn't register).
+			// Emit NODE_FAILED so the node doesn't stay RUNNING forever.
+			maxRetries := 0
+			if gn, ok := nodeMap[ns.NodeID]; ok {
+				maxRetries = gn.Retry.MaxRetries
+			}
+			retryable := ns.RetryCount < maxRetries
+			reason := fmt.Sprintf("runtime instance not found: %v", err)
+			if !retryable {
+				reason = fmt.Sprintf("runtime instance not found (retries exhausted): %v", err)
+			}
+			if emitErr := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+				domain.NodeFailed{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					SessionID:  ns.SessionID,
+					Reason:     reason,
+					Retryable:  retryable,
+				}); emitErr != nil {
+				slog.Error("reap: emit NODE_FAILED for missing instance failed",
+					"node", ns.NodeID, "error", emitErr)
+			}
 			continue
 		}
 		if inst.State != domain.RuntimeStateExited {
@@ -185,7 +208,7 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		}
 
 		// Emit metrics snapshot.
-		r.emitNodeEvent(ctx, workflowID, ns, store.EventMetricsSnapshot,
+		if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventMetricsSnapshot,
 			domain.MetricsSnapshot{
 				NodeID:     ns.NodeID,
 				WorkflowID: workflowID,
@@ -194,7 +217,9 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 				TokensOut:  inst.Metrics.TokensOut,
 				ToolCalls:  inst.Metrics.ToolCalls,
 				DurationMs: inst.Metrics.DurationMs,
-			})
+			}); err != nil {
+				slog.Warn("reap: emit metrics snapshot failed", "node", ns.NodeID, "error", err)
+			}
 
 		if inst.ExitCode == 0 {
 			slog.Info("runtime exited",
@@ -206,12 +231,14 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 				"tool_calls", inst.Metrics.ToolCalls,
 				"duration_ms", inst.Metrics.DurationMs,
 			)
-			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeCompleted,
+			if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeCompleted,
 				domain.NodeCompleted{
 					NodeID:     ns.NodeID,
 					WorkflowID: workflowID,
 					SessionID:  ns.SessionID,
-				})
+				}); err != nil {
+				slog.Error("reap: emit NODE_COMPLETED failed", "node", ns.NodeID, "error", err)
+			}
 			continue
 		}
 
@@ -221,23 +248,27 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 			maxRetries = gn.Retry.MaxRetries
 		}
 		if ns.RetryCount < maxRetries {
-			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+			if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
 				domain.NodeFailed{
 					NodeID:     ns.NodeID,
 					WorkflowID: workflowID,
 					SessionID:  ns.SessionID,
 					Reason:     fmt.Sprintf("exit code %d", inst.ExitCode),
 					Retryable:  true,
-				})
+				}); err != nil {
+				slog.Error("reap: emit NODE_FAILED failed", "node", ns.NodeID, "error", err)
+			}
 		} else {
-			r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+			if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
 				domain.NodeFailed{
 					NodeID:     ns.NodeID,
 					WorkflowID: workflowID,
 					SessionID:  ns.SessionID,
 					Reason:     fmt.Sprintf("exit code %d (retries exhausted)", inst.ExitCode),
 					Retryable:  false,
-				})
+				}); err != nil {
+				slog.Error("reap: emit NODE_FAILED failed", "node", ns.NodeID, "error", err)
+			}
 		}
 	}
 }
@@ -253,7 +284,7 @@ func mkInstanceID(nodeID string, attempt int) string {
 }
 
 // emitNodeEvent appends a node event and applies it to projections.
-func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns domain.NodeState, eventType store.EventType, payload interface{}) {
+func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns domain.NodeState, eventType store.EventType, payload interface{}) error {
 	data, _ := json.Marshal(payload)
 
 	event := store.Event{
@@ -264,13 +295,13 @@ func (r *Reconciler) emitNodeEvent(ctx context.Context, workflowID string, ns do
 	}
 	positions, err := r.eventStore.Append(ctx, "node-"+ns.NodeID, []store.Event{event})
 	if err != nil {
-		slog.Error("reap: append event failed", "node", ns.NodeID, "error", err)
-		return
+		return fmt.Errorf("emit event: append %s for %s: %w", eventType, ns.NodeID, err)
 	}
 	event.Position = positions[0]
 	if err := r.stateStore.Apply(event); err != nil {
-		slog.Error("reap: apply event failed", "node", ns.NodeID, "error", err)
+		return fmt.Errorf("emit event: apply %s for %s: %w", eventType, ns.NodeID, err)
 	}
+	return nil
 }
 
 // launchRuntime resolves the skill prompt and starts the runtime process for a node.
@@ -323,14 +354,16 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 				reason = fmt.Sprintf("runtime launch failed (retries exhausted): %v", err)
 			}
 
-			r.emitNodeEvent(ctx, workflowID, *ns, store.EventNodeFailed,
+			if emitErr := r.emitNodeEvent(ctx, workflowID, *ns, store.EventNodeFailed,
 				domain.NodeFailed{
 					NodeID:     ns.NodeID,
 					WorkflowID: workflowID,
 					SessionID:  ns.SessionID,
 					Reason:     reason,
 					Retryable:  retryable,
-				})
+				}); emitErr != nil {
+				slog.Error("launchRuntime: emit NODE_FAILED failed", "node", nodeID, "error", emitErr)
+			}
 			slog.Warn("failed to launch runtime",
 				"node", nodeID, "error", err, "retryable", retryable)
 		}

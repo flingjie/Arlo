@@ -118,7 +118,16 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 			tokensIn, tokensOut int64
 			toolCalls           int
 		}
+		// Drain stderr concurrently to avoid pipe-buffer deadlock / SIGPIPE.
+		stderrDone := make(chan struct{})
+		go func() {
+			io.Copy(stderrBuf, stderr)
+			close(stderrDone)
+		}()
+
 		scanner := bufio.NewScanner(stdout)
+		// Allow large stream-json lines (default 64KB is too small).
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			stdoutBuf.Write(line)
@@ -132,7 +141,7 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 				}
 			}
 		}
-		go io.Copy(stderrBuf, stderr)
+		<-stderrDone
 
 		err := cmd.Wait()
 

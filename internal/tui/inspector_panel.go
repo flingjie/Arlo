@@ -22,9 +22,8 @@ type InspectorPanel struct {
 	// Latest metrics snapshot per node (for the Metrics tab).
 	latestMetrics map[string]MetricsSnapshotItem
 
-	// Dispatcher subscription.
+	// Dispatcher is retained for command Dispatch helpers; Model owns Subscribe.
 	dispatcher *Dispatcher
-	sub        Subscriber
 }
 
 // NewInspectorPanel creates a new inspector panel.
@@ -37,19 +36,8 @@ func NewInspectorPanel(dispatcher *Dispatcher) *InspectorPanel {
 	}
 }
 
-// Init subscribes to the dispatcher for event log collection.
-func (p *InspectorPanel) Init() tea.Cmd {
-	if p.dispatcher != nil {
-		p.sub = p.dispatcher.Subscribe()
-		return p.listenDispatcher
-	}
-	return nil
-}
-
-func (p *InspectorPanel) listenDispatcher() tea.Msg {
-	event := <-p.sub
-	return event
-}
+// Init is a no-op; the Model owns the single dispatcher subscription.
+func (p *InspectorPanel) Init() tea.Cmd { return nil }
 
 // Update handles internal events for log collection.
 func (p *InspectorPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
@@ -68,8 +56,6 @@ func (p *InspectorPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			p.latestMetrics[m.NodeID] = m
 		}
 		return nil, true
-	case InternalEvent:
-		return p.listenDispatcher, true
 	}
 	return nil, false
 }
@@ -125,32 +111,28 @@ func (p *InspectorPanel) View(width, height int) string {
 		)
 	}
 
+	innerW := width - 4 // account for panel border + padding
+	if innerW < 20 {
+		innerW = 20
+	}
+
 	var sb strings.Builder
 
-	tabs := []InspectorTab{TabSummary, TabLogs, TabPrompt, TabArtifacts, TabMetrics}
-	tabBar := ""
-	for _, t := range tabs {
-		if t == p.tab {
-			tabBar += SelectedStyle.Render(fmt.Sprintf("[%s]", t.String()))
-		} else {
-			tabBar += GrayStyle.Render(fmt.Sprintf(" %s ", t.String()))
-		}
-		tabBar += " "
-	}
-	sb.WriteString(HeaderStyle.Render("NODE INSPECTOR"))
-	sb.WriteString("  ")
-	sb.WriteString(tabBar)
+	// Title on its own line — HeaderStyle.MarginBottom used to scramble the tab bar.
+	sb.WriteString(CyanStyle.Bold(true).Render("NODE INSPECTOR"))
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", width-2))
-	sb.WriteString("\n\n")
+	sb.WriteString(p.renderTabBar())
+	sb.WriteString("\n")
+	sb.WriteString(GrayStyle.Render(strings.Repeat("─", innerW)))
+	sb.WriteString("\n")
 
 	switch p.tab {
 	case TabSummary:
-		p.renderSummary(&sb)
+		p.renderSummary(&sb, innerW)
 	case TabLogs:
 		p.renderLogs(&sb)
 	case TabPrompt:
-		p.renderPrompt(&sb)
+		p.renderPrompt(&sb, innerW)
 	case TabArtifacts:
 		p.renderArtifacts(&sb)
 	case TabMetrics:
@@ -160,44 +142,71 @@ func (p *InspectorPanel) View(width, height int) string {
 	return PanelStyle.Width(width).Height(height).Render(sb.String())
 }
 
+func (p *InspectorPanel) renderTabBar() string {
+	tabs := []InspectorTab{TabSummary, TabLogs, TabPrompt, TabArtifacts, TabMetrics}
+	parts := make([]string, 0, len(tabs))
+	for i, t := range tabs {
+		label := fmt.Sprintf("%d:%s", i+1, t.String())
+		if t == p.tab {
+			parts = append(parts, SelectedStyle.Render(" "+label+" "))
+		} else {
+			parts = append(parts, GrayStyle.Render(" "+label+" "))
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 // ── Summary Tab ───────────────────────────────────
 
-func (p *InspectorPanel) renderSummary(sb *strings.Builder) {
+func (p *InspectorPanel) renderSummary(sb *strings.Builder, width int) {
 	n := p.node
 
-	sectionHeader(sb, "Status", 40)
+	// Hero: icon + name left, status right.
 	icon := StatusIcon(n.Status)
 	statusStyle := statusTextStyle(n.Status, false)
-	sb.WriteString(fmt.Sprintf("  %s  %s  %s\n", icon, WhiteStyle.Render(n.NodeId), statusStyle.Render(n.Status)))
+	name := WhiteStyle.Bold(true).Render(n.NodeId)
+	status := statusStyle.Render(n.Status)
+	left := icon + " " + name
+	gap := width - lipgloss.Width(left) - lipgloss.Width(status) - 2
+	if gap < 1 {
+		gap = 1
+	}
+	sb.WriteString("  " + left + strings.Repeat(" ", gap) + status + "\n")
 
+	var meta []string
+	if n.RetryCount > 0 {
+		meta = append(meta, YellowStyle.Render(fmt.Sprintf("retry %d", n.RetryCount)))
+	}
 	if n.StartedAt != "" {
-		kvLine(sb, "Started", relativeTime(n.StartedAt), WhiteStyle)
+		meta = append(meta, GrayStyle.Render("started "+relativeTime(n.StartedAt)))
 	}
 	if n.CompletedAt != "" {
-		kvLine(sb, "Completed", relativeTime(n.CompletedAt), WhiteStyle)
+		meta = append(meta, GrayStyle.Render("done "+relativeTime(n.CompletedAt)))
 	}
-	if n.RetryCount > 0 {
-		kvLine(sb, "Retries", fmt.Sprintf("%d", n.RetryCount), YellowStyle)
+	if len(meta) > 0 {
+		sb.WriteString("  " + strings.Join(meta, GrayStyle.Render(" · ")) + "\n")
 	}
 
 	sb.WriteString("\n")
-
-	sectionHeader(sb, "Configuration", 34)
-	kvLine(sb, "Gate", emptyDash(n.Gate, "none"), WhiteStyle)
-	kvLine(sb, "Depends On", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
-	kvLine(sb, "Children", emptyDash(strings.Join(n.Children, ", "), ""), WhiteStyle)
-
-	sb.WriteString("\n")
-
-	sectionHeader(sb, "Session", 38)
-	kvLine(sb, "Session", emptyDash(n.SessionId, ""), WhiteStyle)
-	kvLine(sb, "Runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
+	sectionHeader(sb, "Configuration", width)
+	kvLine(sb, "gate", emptyDash(n.Gate, "none"), WhiteStyle)
+	kvLine(sb, "depends on", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
+	kvLine(sb, "children", emptyDash(strings.Join(n.Children, ", "), ""), WhiteStyle)
 
 	sb.WriteString("\n")
+	sectionHeader(sb, "Session", width)
+	kvLine(sb, "session", emptyDash(n.SessionId, ""), WhiteStyle)
+	kvLine(sb, "runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
 
-	sectionHeader(sb, "Commands", 36)
+	sb.WriteString("\n")
+	sectionHeader(sb, "Commands", width)
 	sb.WriteString("  ")
-	sb.WriteString(GrayStyle.Render(":attach :approve :reject :retry :logs"))
+	cmds := []string{":attach", ":approve", ":reject", ":retry", ":logs"}
+	styled := make([]string, len(cmds))
+	for i, c := range cmds {
+		styled[i] = CyanStyle.Render(c)
+	}
+	sb.WriteString(strings.Join(styled, "  "))
 	sb.WriteString("\n")
 }
 
@@ -232,33 +241,30 @@ func (p *InspectorPanel) renderMetrics(sb *strings.Builder) {
 		return
 	}
 
-	// Token usage with visual bars.
 	maxTokens := max(m.TokensIn, m.TokensOut)
 	if maxTokens < 100 {
 		maxTokens = 100
 	}
 	barW := 20
 
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tokens In"), WhiteStyle.Render(fmt.Sprintf("%d", m.TokensIn))))
-	sb.WriteString(fmt.Sprintf("  %-12s  %s %s\n", "", GrayStyle.Render("│"), tokenBar(m.TokensIn, maxTokens, barW)))
-	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tokens Out"), WhiteStyle.Render(fmt.Sprintf("%d", m.TokensOut))))
-	sb.WriteString(fmt.Sprintf("  %-12s  %s %s\n", "", GrayStyle.Render("│"), tokenBar(m.TokensOut, maxTokens, barW)))
-	sb.WriteString("\n")
+	kvLine(sb, "tokens in", fmt.Sprintf("%d", m.TokensIn), WhiteStyle)
+	sb.WriteString("              " + GrayStyle.Render("│") + " " + tokenBar(m.TokensIn, maxTokens, barW) + "\n")
+	kvLine(sb, "tokens out", fmt.Sprintf("%d", m.TokensOut), WhiteStyle)
+	sb.WriteString("              " + GrayStyle.Render("│") + " " + tokenBar(m.TokensOut, maxTokens, barW) + "\n")
 
 	if m.TokensIn+m.TokensOut > 0 {
 		total := m.TokensIn + m.TokensOut
 		cost := float64(m.TokensIn)/1_000_000*3 + float64(m.TokensOut)/1_000_000*15
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Total"), WhiteStyle.Render(fmt.Sprintf("%d tokens", total))))
-		sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Est. Cost"), YellowStyle.Render(fmt.Sprintf("$%.4f", cost))))
-		sb.WriteString("\n")
+		kvLine(sb, "total", fmt.Sprintf("%d tokens", total), WhiteStyle)
+		kvLine(sb, "est. cost", fmt.Sprintf("$%.4f", cost), YellowStyle)
 	}
 
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Tool Calls"), WhiteStyle.Render(fmt.Sprintf("%d", m.ToolCalls))))
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n", GrayStyle.Render("Duration"), WhiteStyle.Render(formatDur(m.DurationMs))))
+	sb.WriteString("\n")
+	kvLine(sb, "tool calls", fmt.Sprintf("%d", m.ToolCalls), WhiteStyle)
+	kvLine(sb, "duration", formatDur(m.DurationMs), WhiteStyle)
 
 	sb.WriteString("\n")
-	sb.WriteString(GrayStyle.Render("  Token pricing: $3/M in, $15/M out (Claude Sonnet)"))
+	sb.WriteString(GrayStyle.Render("  pricing · $3/M in · $15/M out"))
 	sb.WriteString("\n")
 }
 
@@ -287,7 +293,7 @@ func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
 
 	if len(artifacts) == 0 {
 		sb.WriteString(GrayStyle.Render("  No artifacts yet.\n"))
-		sb.WriteString(GrayStyle.Render("  Artifacts are created when a node completes with output files.\n"))
+		sb.WriteString(GrayStyle.Render("  Created when a node finishes with output files.\n"))
 		sb.WriteString(GrayStyle.Render("  Try: arlo artifacts <task-id>\n"))
 		return
 	}
@@ -303,7 +309,7 @@ func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
 
 // ── Prompt Tab ────────────────────────────────────
 
-func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
+func (p *InspectorPanel) renderPrompt(sb *strings.Builder, width int) {
 	n := p.node
 
 	var skill string
@@ -314,41 +320,52 @@ func (p *InspectorPanel) renderPrompt(sb *strings.Builder) {
 		}
 	}
 
-	sectionHeader(sb, "Agent Configuration", 28)
-	kvLine(sb, "Skill", emptyDash(skill, ""), WhiteStyle)
-	kvLine(sb, "Runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
+	sectionHeader(sb, "Agent Configuration", width)
+	kvLine(sb, "skill", emptyDash(skill, ""), WhiteStyle)
+	kvLine(sb, "runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
 
 	sb.WriteString("\n")
-	sectionHeader(sb, "Prompt Context", 32)
-	kvLine(sb, "Node ID", n.NodeId, WhiteStyle)
-	kvLine(sb, "Gate", emptyDash(n.Gate, "none"), WhiteStyle)
-	kvLine(sb, "Retry Max", fmt.Sprintf("%d", n.RetryCount), WhiteStyle)
-	kvLine(sb, "Depends On", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
+	sectionHeader(sb, "Prompt Context", width)
+	kvLine(sb, "node", n.NodeId, WhiteStyle)
+	kvLine(sb, "gate", emptyDash(n.Gate, "none"), WhiteStyle)
+	kvLine(sb, "retries", fmt.Sprintf("%d", n.RetryCount), WhiteStyle)
+	kvLine(sb, "depends on", emptyDash(strings.Join(n.DependsOn, ", "), ""), WhiteStyle)
 
 	sb.WriteString("\n")
-	sb.WriteString(GrayStyle.Render("  The full prompt is assembled at runtime by the Claude"))
-	sb.WriteString("\n")
-	sb.WriteString(GrayStyle.Render("  Code adapter combining skill, context, and workspace state."))
+	sb.WriteString(GrayStyle.Render("  Prompt is assembled at runtime from skill + context + workspace."))
 	sb.WriteString("\n")
 }
 
 // ── Helpers ───────────────────────────────────────
 
-// sectionHeader writes a cyan section divider like "── Status ──────────────".
-func sectionHeader(sb *strings.Builder, title string, repeat int) {
+const kvLabelWidth = 12
+
+// sectionHeader writes a compact cyan section title with a trailing rule to width.
+func sectionHeader(sb *strings.Builder, title string, width int) {
+	prefix := "── " + title + " "
+	fill := width - 2 - lipgloss.Width(prefix)
+	if fill < 2 {
+		fill = 2
+	}
 	sb.WriteString("  ")
-	sb.WriteString(CyanStyle.Render("── " + title))
-	sb.WriteString(strings.Repeat("─", repeat))
+	sb.WriteString(CyanStyle.Render(prefix + strings.Repeat("─", fill)))
 	sb.WriteString("\n")
 }
 
-// kvLine writes a left-aligned label and styled value.
-// label is padded to 12 characters.
+// kvLine writes a label/value row. Labels are padded by visible width so ANSI
+// color codes do not break column alignment.
 func kvLine(sb *strings.Builder, label string, value string, valueStyle lipgloss.Style) {
-	sb.WriteString(fmt.Sprintf("  %-12s  %s\n",
-		GrayStyle.Render(label),
-		valueStyle.Render(value),
-	))
+	styledLabel := GrayStyle.Render(label)
+	pad := kvLabelWidth - lipgloss.Width(label)
+	if pad < 0 {
+		pad = 0
+	}
+	sb.WriteString("  ")
+	sb.WriteString(styledLabel)
+	sb.WriteString(strings.Repeat(" ", pad))
+	sb.WriteString("  ")
+	sb.WriteString(valueStyle.Render(value))
+	sb.WriteString("\n")
 }
 
 // emptyDash returns "—" if value is empty or equals the exclude string.

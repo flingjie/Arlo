@@ -15,11 +15,11 @@ type WorkflowPanel struct {
 	selected   int
 	collapsed  map[string]bool
 	focused    bool
-	sub        Subscriber
 	dispatcher *Dispatcher
 
-	wfID     string
-	wfStatus string
+	wfID      string
+	wfStatus  string
+	wfVersion uint64 // last applied snapshot version; rejects stale updates
 }
 
 // NewWorkflowPanel creates a new workflow panel.
@@ -30,22 +30,22 @@ func NewWorkflowPanel(dispatcher *Dispatcher) *WorkflowPanel {
 	}
 }
 
-func (p *WorkflowPanel) Init() tea.Cmd {
-	p.sub = p.dispatcher.Subscribe()
-	return p.listenDispatcher
-}
-
-func (p *WorkflowPanel) listenDispatcher() tea.Msg {
-	event := <-p.sub
-	return event
-}
+func (p *WorkflowPanel) Init() tea.Cmd { return nil }
 
 func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case WorkflowUpdatedEvent:
+		// Ignore out-of-order snapshots so a delayed older event cannot
+		// overwrite sess-N+1 / retry state with a stale sess-N view.
+		if msg.Version > 0 && msg.Version < p.wfVersion {
+			return nil, true
+		}
 		p.nodes = msg.Nodes
 		p.wfID = msg.WorkflowID
 		p.wfStatus = msg.Status
+		if msg.Version > p.wfVersion {
+			p.wfVersion = msg.Version
+		}
 		return nil, true
 	case tea.KeyMsg:
 		if !p.focused {
@@ -72,8 +72,6 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return nil, true
-	case InternalEvent:
-		return p.listenDispatcher, true
 	}
 	return nil, false
 }

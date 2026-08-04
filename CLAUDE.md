@@ -9,12 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Arlo** is an AgentOS — a system conceptually similar to Kubernetes + Temporal + HumanLayer + Claude Code Runtime, written in Go.
 
-| Concept | Role in Arlo |
-|---------|-------------|
-| `arlod` | The daemon: a long-lived gRPC server. The AgentOS runtime. |
-| `arlo`  | The CLI/TUI client: a Bubble Tea terminal app that talks to `arlod`. |
+| Concept        | Role in Arlo                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `arlod`        | The daemon: a long-lived gRPC server. The AgentOS runtime.                                 |
+| `arlo`         | The CLI/TUI client: a Bubble Tea terminal app that talks to `arlod`.                       |
 | Event Sourcing | The persistence model. All state changes are events. The event log is the source of truth. |
-| gRPC | Communication protocol between `arlo` ↔ `arlod` (and future agents). |
+| gRPC           | Communication protocol between `arlo` ↔ `arlod` (and future agents).                       |
 
 ## Essential Commands
 
@@ -77,19 +77,19 @@ go test -race ./internal/runtime/...
 
 ### v0.1 Package Structure
 
-| Package | Responsibility | Status |
-|---------|---------------|--------|
-| `cmd/arlod/` | Daemon entrypoint. Wires all dependencies, starts gRPC server. | Not started |
-| `cmd/arlo/` | CLI entrypoint. `run`, `status`, `attach`, `artifacts` commands. | Not started |
-| `api/proto/` | Protobuf service definitions. gRPC contract. | Not started |
-| `internal/store/` | Event Store + SQLite implementation. Append-only event log. | **Step 1** |
-| `internal/domain/` | Event types, Task, Workflow, Node, RuntimeInstance, Artifact structs. | **Step 2** |
-| `internal/state/` | State Store + Projections. Replay events → current state. | **Step 3** |
-| `internal/workflow/` | Workflow Engine. YAML parser, DAG compiler, Evaluate → Decisions. | **Step 4** |
-| `internal/reconciler/` | Reconciliation loop. Read state → compute → act. | **Step 5** |
-| `internal/runtime/` | RuntimeManager + ClaudeCodeAdapter. Agent process lifecycle. | **Step 6** |
-| `internal/workspace/` | WorkspaceManager + TmuxProvider. Tmux session/window management. | **Step 6** |
-| `internal/service/` | gRPC service handlers. Thin layer delegating to lower packages. | **Step 7** |
+| Package                | Responsibility                                                        | Status      |
+| ---------------------- | --------------------------------------------------------------------- | ----------- |
+| `cmd/arlod/`           | Daemon entrypoint. Wires all dependencies, starts gRPC server.        | Not started |
+| `cmd/arlo/`            | CLI entrypoint. `run`, `status`, `attach`, `artifacts` commands.      | Not started |
+| `api/proto/`           | Protobuf service definitions. gRPC contract.                          | Not started |
+| `internal/store/`      | Event Store + SQLite implementation. Append-only event log.           | **Step 1**  |
+| `internal/domain/`     | Event types, Task, Workflow, Node, RuntimeInstance, Artifact structs. | **Step 2**  |
+| `internal/state/`      | State Store + Projections. Replay events → current state.             | **Step 3**  |
+| `internal/workflow/`   | Workflow Engine. YAML parser, DAG compiler, Evaluate → Decisions.     | **Step 4**  |
+| `internal/reconciler/` | Reconciliation loop. Read state → compute → act.                      | **Step 5**  |
+| `internal/runtime/`    | RuntimeManager + ClaudeCodeAdapter. Agent process lifecycle.          | **Step 6**  |
+| `internal/workspace/`  | WorkspaceManager + TmuxProvider. Tmux session/window management.      | **Step 6**  |
+| `internal/service/`    | gRPC service handlers. Thin layer delegating to lower packages.       | **Step 7**  |
 
 ### Dependency Direction (v0.1)
 
@@ -177,6 +177,7 @@ Keep the Bubble Tea model in `cmd/arlo/` itself. Extract reusable UI components 
 ### Linter Philosophy
 
 `.golangci.yml` is configured for this architecture:
+
 - Complexity checks are slightly relaxed (`gocyclo: 20`, `gocognit: 25`) because event sourcing handlers can be long.
 - `exhaustruct` is disabled for now — enable it once domain types stabilize.
 - `funlen` is disabled — event sourcing `Handle` methods are naturally longer.

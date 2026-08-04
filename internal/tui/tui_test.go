@@ -296,9 +296,10 @@ func TestInspectorPanelTabsAllPresent(t *testing.T) {
 	for _, tab := range []InspectorTab{TabSummary, TabLogs, TabPrompt, TabArtifacts, TabMetrics} {
 		p.SetTab(tab)
 		view := p.View(60, 30)
-		// Each tab should show itself as selected.
-		if !strings.Contains(view, fmt.Sprintf("[%s]", tab.String())) {
-			t.Errorf("tab %s not shown as selected", tab.String())
+		// Each tab should show itself as selected (highlighted with key hint).
+		want := fmt.Sprintf("%d:%s", int(tab)+1, tab.String())
+		if !strings.Contains(stripAnsi(view), want) {
+			t.Errorf("tab %s not shown as selected (want %q)", tab.String(), want)
 		}
 	}
 }
@@ -315,13 +316,16 @@ func TestInspectorPanelSummarySections(t *testing.T) {
 	p.SetNode(n)
 	view := p.View(60, 20)
 
-	for _, section := range []string{"Status", "Configuration", "Session", "Commands"} {
+	for _, section := range []string{"Configuration", "Session", "Commands"} {
 		if !strings.Contains(view, section) {
 			t.Errorf("missing section %q", section)
 		}
 	}
-	if !strings.Contains(view, "2") {
-		t.Error("missing retry count")
+	if !strings.Contains(stripAnsi(view), "RUNNING") {
+		t.Error("missing RUNNING status")
+	}
+	if !strings.Contains(view, "retry") {
+		t.Error("missing retry hint")
 	}
 	if !strings.Contains(view, "human_approval") {
 		t.Error("missing gate")

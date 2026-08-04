@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/lingjiefan/arlo/internal/store"
 )
 
 // Model is the top-level Bubble Tea model.
@@ -27,6 +29,9 @@ type Model struct {
 	// Infrastructure
 	dispatcher *Dispatcher
 	commands   *CommandRegistry
+	// Single dispatcher subscription — panels must not Subscribe themselves,
+	// otherwise Emit fans out N ways and routeInternalEvent appends N times.
+	sub Subscriber
 
 	// Internal
 	ready    bool
@@ -63,12 +68,15 @@ func New(socket, workflow string) *Model {
 
 // Init connects to arlod and starts the event stream.
 func (m *Model) Init() tea.Cmd {
+	m.sub = m.dispatcher.Subscribe()
 	return tea.Batch(
 		m.connectAndStart,
-		m.workflowPanel.Init(),
-		m.inspectorPanel.Init(),
-		m.timelinePanel.Init(),
+		m.listenDispatcher,
 	)
+}
+
+func (m *Model) listenDispatcher() tea.Msg {
+	return <-m.sub
 }
 
 type connectedMsg struct {
@@ -116,15 +124,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.sessionID, msg.nodeID, msg.sessionID)
 	}
 
+	// Dispatcher events: route once to all panels, then re-arm the single listener.
+	// Do not also routePanelUpdate — that would double-apply on the focused panel.
+	if _, isInternal := msg.(InternalEvent); isInternal {
+		cmds = m.routeInternalEvent(msg, cmds)
+		cmds = append(cmds, m.listenDispatcher)
+		return m, tea.Batch(cmds...)
+	}
+
 	// Route to focused panel (except keystrokes, which handle themselves).
 	if _, isKey := msg.(tea.KeyMsg); !isKey {
 		cmds = m.routePanelUpdate(msg, cmds)
-	}
-
-	// Always route dispatcher events to all panels.
-	if _, isInternal := msg.(InternalEvent); isInternal {
-		cmds = m.routeInternalEvent(msg, cmds)
-		return m, tea.Batch(cmds...)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -288,12 +298,16 @@ func (m *Model) handleSnapshot(msg snapshotMsg) {
 		}
 	}
 
-	m.dispatcher.Emit(WorkflowUpdatedEvent{
+	ev := WorkflowUpdatedEvent{
 		WorkflowID: m.workflow,
 		Status:     msg.status,
 		Version:    msg.version,
 		Nodes:      msg.nodes,
-	})
+	}
+	// Apply synchronously so the tree cannot lag behind the inspector, and so a
+	// delayed tea.Msg from an older snapshot cannot win a race before Emit lands.
+	m.workflowPanel.Update(ev)
+	m.dispatcher.Emit(ev)
 	m.syncInspectorToSelection()
 }
 
@@ -325,8 +339,8 @@ func (m *Model) handleEvent(msg eventMsg) []tea.Cmd {
 // GetSnapshot to keep the TUI panels in sync with server-side projections.
 func isStateChangeEvent(eventType string) bool {
 	switch eventType {
-	case "NODE_STARTED", "NODE_COMPLETED", "NODE_FAILED", "NODE_WAITING",
-		"TASK_COMPLETED", "TASK_FAILED":
+	case string(store.EventNodeStarted), string(store.EventNodeCompleted), string(store.EventNodeFailed),
+		string(store.EventNodeWaiting), string(store.EventTaskCompleted), string(store.EventTaskFailed):
 		return true
 	}
 	return false
