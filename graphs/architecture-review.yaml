@@ -38,7 +38,6 @@ nodes:
       model: deepseek-v4-pro
     depends_on:
       - identify
-    gate: human_approval
     retry:
       max_retries: 1
 
