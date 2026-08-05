@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -837,6 +838,408 @@ func TestNewSQLiteStore_MemoryPath(t *testing.T) {
 	// In-memory databases work, but data is lost on close.
 	// For production use, always use a file path.
 	s.Close()
+}
+
+// TestAppendToEmptyStreamID verifies appending with an empty stream ID does not crash.
+func TestAppendToEmptyStreamID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	positions, err := s.Append(ctx, "", []Event{
+		testEvent("evt-1", EventTaskCreated, map[string]string{"key": "val"}),
+	})
+	if err != nil {
+		t.Fatalf("Append with empty stream ID: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("expected 1 position, got %d", len(positions))
+	}
+
+	// Verify we can read it back.
+	events, err := s.Read(ctx, "", 1)
+	if err != nil {
+		t.Fatalf("Read empty stream: %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(events))
+	}
+}
+
+// TestAppendWithEmptyEventID verifies that appending events with empty IDs
+// triggers a duplicate error when two empty IDs appear in the same batch.
+func TestAppendWithEmptyEventID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Two events with empty IDs in the same batch: second one violates UNIQUE.
+	_, err := s.Append(ctx, "stream-1", []Event{
+		{ID: "", Type: EventTaskCreated, Payload: json.RawMessage(`{}`)},
+		{ID: "", Type: EventNodeStarted, Payload: json.RawMessage(`{}`)},
+	})
+	if err == nil {
+		t.Error("expected error for duplicate empty event IDs")
+	}
+}
+
+// TestReadAllEmptyStore verifies ReadAll returns an empty slice on a fresh store.
+func TestReadAllEmptyStore(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	events, nextPos, err := s.ReadAll(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("ReadAll empty store: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(events))
+	}
+	if nextPos != 0 {
+		t.Errorf("nextPos = %d, want 0", nextPos)
+	}
+}
+
+// TestReadBeyondVersion verifies reading from a version beyond the last event returns empty.
+func TestReadBeyondVersion(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-1", EventTaskCreated, nil),
+		testEvent("evt-2", EventNodeStarted, nil),
+	})
+
+	// Read from version 999 — should be empty.
+	events, err := s.Read(ctx, "stream-1", 999)
+	if err != nil {
+		t.Fatalf("Read beyond version: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events beyond version, got %d", len(events))
+	}
+}
+
+// TestLastPosition verifies LastPosition returns the correct value after appends.
+func TestLastPosition(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if pos := s.LastPosition(); pos != 0 {
+		t.Errorf("initial LastPosition = %d, want 0", pos)
+	}
+
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-1", EventTaskCreated, nil),
+	})
+	if pos := s.LastPosition(); pos != 1 {
+		t.Errorf("LastPosition after 1 event = %d, want 1", pos)
+	}
+
+	s.Append(ctx, "stream-2", []Event{
+		testEvent("evt-2", EventNodeStarted, nil),
+		testEvent("evt-3", EventNodeCompleted, nil),
+	})
+	if pos := s.LastPosition(); pos != 3 {
+		t.Errorf("LastPosition after 3 events = %d, want 3", pos)
+	}
+}
+
+// TestLastPositionEmpty verifies LastPosition returns 0 on an empty store
+// without any prior appends.
+func TestLastPositionEmpty(t *testing.T) {
+	s := newTestStore(t)
+
+	// No appends — position should be 0.
+	if pos := s.LastPosition(); pos != 0 {
+		t.Errorf("LastPosition on empty store = %d, want 0", pos)
+	}
+}
+
+// TestSubscribeContextCancel verifies the subscriber channel is closed
+// when the context is cancelled.
+func TestSubscribeContextCancel(t *testing.T) {
+	s := newTestStore(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := s.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Cancel the context.
+	cancel()
+
+	// Channel should be closed after context cancellation.
+	// Drain the channel until it closes.
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				// Channel closed — expected.
+				return
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for channel to close after context cancel")
+		}
+	}
+}
+
+// TestSubscribeNoEvents verifies the subscriber channel stays open
+// when no new events arrive after subscription.
+func TestSubscribeNoEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := newTestStore(t)
+
+	// Pre-populate one event so we can subscribe from a known position.
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-1", EventTaskCreated, nil),
+	})
+
+	// Subscribe from the last position — no historical events to replay,
+	// and no new events are being appended.
+	lastPos := s.LastPosition()
+	ch, err := s.Subscribe(ctx, lastPos)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Channel should stay open (not closed) when there are no events.
+	select {
+	case e, ok := <-ch:
+		if !ok {
+			t.Error("channel was closed unexpectedly with no new events")
+		} else {
+			t.Errorf("received unexpected event: %v", e.ID)
+		}
+	case <-time.After(200 * time.Millisecond):
+		// Expected: no events and channel stays open.
+	}
+}
+
+// TestConcurrentAppendSameStream verifies two goroutines appending to the same stream
+// are serialized correctly and events get consecutive versions.
+func TestConcurrentAppendSameStream(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	var wg sync.WaitGroup
+	var errCount int32
+	eventsPerGoroutine := 50
+
+	for g := 0; g < 2; g++ {
+		wg.Add(1)
+		gid := g
+		go func() {
+			defer wg.Done()
+			for i := 0; i < eventsPerGoroutine; i++ {
+				_, err := s.Append(ctx, "shared-stream", []Event{
+					testEvent(fmt.Sprintf("evt-g%d-%d", gid, i), EventTaskCreated, nil),
+				})
+				if err != nil {
+					// Count errors rather than failing from goroutine.
+					errCount++
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if errCount > 0 {
+		t.Fatalf("%d append errors occurred", errCount)
+	}
+
+	// All events should be in the stream with consecutive versions.
+	events, err := s.Read(ctx, "shared-stream", 1)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	total := eventsPerGoroutine * 2
+	if len(events) != total {
+		t.Fatalf("expected %d total events, got %d", total, len(events))
+	}
+	for i, e := range events {
+		if e.Version != i+1 {
+			t.Errorf("event %d version = %d, want %d", i, e.Version, i+1)
+		}
+	}
+}
+
+// TestLargeEventPayload verifies appending and reading back an event with a ~10KB payload.
+func TestLargeEventPayload(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Create a ~10KB payload.
+	largeString := strings.Repeat("x", 10000)
+	payload, _ := json.Marshal(map[string]string{"data": largeString})
+
+	_, err := s.Append(ctx, "stream-1", []Event{
+		{ID: "large-evt", Type: EventTaskCreated, Payload: json.RawMessage(payload)},
+	})
+	if err != nil {
+		t.Fatalf("Append large payload: %v", err)
+	}
+
+	// Read it back and verify the payload is intact.
+	events, err := s.Read(ctx, "stream-1", 1)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	var decoded map[string]string
+	if err := json.Unmarshal(events[0].Payload, &decoded); err != nil {
+		t.Fatalf("unmarshal large payload: %v", err)
+	}
+	if decoded["data"] != largeString {
+		t.Errorf("payload corrupted: expected %d bytes, got %d bytes", len(largeString), len(decoded["data"]))
+	}
+}
+
+// TestMultipleStreamsReadAllOrdering verifies ReadAll returns events in global position order
+// across multiple interleaved streams.
+func TestMultipleStreamsReadAllOrdering(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Append to 6 streams interleaved.
+	streams := []string{"stream-a", "stream-b", "stream-c", "stream-d", "stream-e", "stream-f"}
+	for i, sid := range streams {
+		s.Append(ctx, sid, []Event{
+			testEvent(fmt.Sprintf("evt-%s", sid), EventTaskCreated, nil),
+		})
+		// Also append a second event to half the streams to interleave more.
+		if i%2 == 0 {
+			s.Append(ctx, sid, []Event{
+				testEvent(fmt.Sprintf("evt-%s-2", sid), EventNodeStarted, nil),
+			})
+		}
+	}
+
+	// ReadAll should return events in global position order.
+	events, _, err := s.ReadAll(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	// Total: 6 first events + 3 second events = 9 events.
+	if len(events) != 9 {
+		t.Fatalf("expected 9 events, got %d", len(events))
+	}
+
+	// Verify global position order is strictly increasing.
+	for i := 1; i < len(events); i++ {
+		if events[i].Position <= events[i-1].Position {
+			t.Errorf("events out of order: position %d after %d at index %d",
+				events[i].Position, events[i-1].Position, i)
+		}
+	}
+}
+
+// TestAppendBatchAtomicity verifies that a batch append is atomic:
+// if an error occurs mid-batch (e.g., duplicate event ID), no events from
+// that batch are persisted.
+func TestAppendBatchAtomicity(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// First, create a reference event so we can trigger a duplicate.
+	_, err := s.Append(ctx, "stream-1", []Event{
+		testEvent("conflict-evt", EventTaskCreated, nil),
+	})
+	if err != nil {
+		t.Fatalf("initial append: %v", err)
+	}
+
+	// Now try to append a batch where the 2nd event has a duplicate ID.
+	// The entire batch should be atomic — no events from this batch persist.
+	_, err = s.Append(ctx, "stream-1", []Event{
+		testEvent("good-evt", EventNodeStarted, nil),
+		testEvent("conflict-evt", EventNodeStarted, nil), // duplicate ID
+		testEvent("also-good", EventNodeCompleted, nil),
+	})
+	if err == nil {
+		t.Fatal("expected error for duplicate event ID, got nil")
+	}
+
+	// Verify that "good-evt" and "also-good" were NOT persisted.
+	events, _ := s.Read(ctx, "stream-1", 1)
+	for _, e := range events {
+		if e.ID == "good-evt" || e.ID == "also-good" {
+			t.Errorf("batch was not atomic: event %s was persisted despite batch error", e.ID)
+		}
+	}
+	// Should only have the initial event.
+	if len(events) != 1 {
+		t.Errorf("expected 1 event (the initial one), got %d", len(events))
+	}
+}
+
+// TestCloseMultipleCalls verifies calling Close multiple times is safe and does not panic.
+func TestCloseMultipleCalls(t *testing.T) {
+	s := newTestStore(t)
+
+	// First close.
+	if err := s.Close(); err != nil {
+		t.Logf("first Close returned error: %v", err)
+	}
+
+	// Second close — should not panic.
+	if err := s.Close(); err != nil {
+		t.Logf("second Close returned error (expected): %v", err)
+	}
+
+	// Third close — still safe.
+	if err := s.Close(); err != nil {
+		t.Logf("third Close returned error (expected): %v", err)
+	}
+}
+
+// TestNewSQLiteStore_InvalidPath verifies opening with an invalid path returns an error.
+func TestNewSQLiteStore_InvalidPath(t *testing.T) {
+	_, err := NewSQLiteStore("/nonexistent/directory/should/fail.db")
+	if err == nil {
+		t.Fatal("expected error for invalid path, got nil")
+	}
+}
+
+// BenchmarkRead measures read performance for a single stream.
+func BenchmarkRead(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench-read.db")
+	s, err := NewSQLiteStore(path)
+	if err != nil {
+		b.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Pre-populate 1000 events in one stream.
+	for i := 0; i < 1000; i++ {
+		s.Append(ctx, "bench-stream", []Event{
+			{
+				ID:      fmt.Sprintf("evt-%d", i),
+				Type:    EventTaskCreated,
+				Payload: json.RawMessage(`{"bench":true}`),
+			},
+		})
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, err := s.Read(ctx, "bench-stream", 1)
+		if err != nil {
+			b.Fatalf("Read: %v", err)
+		}
+	}
 }
 
 // BenchmarkAppend measures append throughput.

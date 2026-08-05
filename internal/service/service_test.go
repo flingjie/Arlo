@@ -210,19 +210,19 @@ func (m *mockRuntimeManager) AttachInstance(ctx context.Context, id string) (<-c
 
 func makeValidYAML() string {
 	return `
-name: test-wf
-version: 1
-nodes:
-  - id: node1
-    skill: root-cause
-    runtime:
-      provider: claude-code
-      model: claude-haiku-4-5
-    retry:
-      max_retries: 0
-policy:
-  max_concurrent_nodes: 1
-`
+	name: test-wf
+	version: 1
+	nodes:
+	  - id: node1
+	    skill: root-cause
+	    runtime:
+	      provider: claude-code
+	      model: claude-haiku-4-5
+	    retry:
+	      max_retries: 0
+	policy:
+	  max_concurrent_nodes: 1
+	`
 }
 
 func makeValidGraph() *domain.ExecutableGraph {
@@ -1681,5 +1681,398 @@ func TestAttachPTY_TranslatesSessionID(t *testing.T) {
 	}
 	if strings.HasPrefix(receivedID, "sess-") {
 		t.Errorf("AttachInstance received session ID %q instead of translated runtime instance ID", receivedID)
+	}
+}
+
+// ============================================================================
+// Edge Case & Error Path Tests
+// ============================================================================
+
+// TestCreateTask_EmptyTitle verifies that an empty title still creates a task
+// successfully. The title is stored as metadata and is not validated as required.
+func TestCreateTask_EmptyTitle(t *testing.T) {
+	eng := &mockWorkflowEngine{
+		compileFn: func(ctx context.Context, source []byte) (*domain.ExecutableGraph, error) {
+			return makeValidGraph(), nil
+		},
+	}
+	rec := newMockReconciler()
+	svc := newTestService(&mockEventStore{}, &mockStateStore{}, eng, rec, nil)
+
+	resp, err := svc.CreateTask(context.Background(), &arlov1.CreateTaskRequest{
+		Title:          "",
+		WorkflowSource: makeValidYAML(),
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error for empty title: %v", err)
+	}
+	if resp.TaskId == "" {
+		t.Error("expected non-empty TaskId even with empty title")
+	}
+	if resp.WorkflowId == "" {
+		t.Error("expected non-empty WorkflowId")
+	}
+}
+
+// TestCreateTask_EmptyWorkflowSource verifies that an empty workflow source
+// causes a compile error, which is surfaced as InvalidArgument.
+func TestCreateTask_EmptyWorkflowSource(t *testing.T) {
+	eng := &mockWorkflowEngine{
+		compileFn: func(ctx context.Context, source []byte) (*domain.ExecutableGraph, error) {
+			if len(source) == 0 {
+				return nil, errors.New("empty workflow source")
+			}
+			return makeValidGraph(), nil
+		},
+	}
+	svc := newTestService(&mockEventStore{}, &mockStateStore{}, eng, newMockReconciler(), nil)
+
+	_, err := svc.CreateTask(context.Background(), &arlov1.CreateTaskRequest{
+		Title:          "test",
+		WorkflowSource: "",
+	})
+
+	if err == nil {
+		t.Fatal("expected error for empty workflow source")
+	}
+	if gRPCStatus(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", gRPCStatus(err))
+	}
+}
+
+// TestGetTask_EmptyID verifies that an empty task ID returns NotFound,
+// not a panic or crash. The service prepends "wf-" to the task ID before
+// looking up the workflow, so an empty ID becomes "wf-".
+func TestGetTask_EmptyID(t *testing.T) {
+	ss := &mockStateStore{
+		getWorkflowFn: func(ctx context.Context, workflowID string) (*domain.WorkflowState, error) {
+			return nil, &state.NotFoundError{Entity: "workflow", ID: workflowID}
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	_, err := svc.GetTask(context.Background(), &arlov1.GetTaskRequest{TaskId: ""})
+
+	if err == nil {
+		t.Fatal("expected NotFound error for empty task ID")
+	}
+	if gRPCStatus(err) != codes.NotFound {
+		t.Errorf("expected NotFound, got %v", gRPCStatus(err))
+	}
+}
+
+// TestGetWorkflow_EmptyID verifies that an empty workflow ID returns NotFound.
+func TestGetWorkflow_EmptyID(t *testing.T) {
+	ss := &mockStateStore{
+		getWorkflowFn: func(ctx context.Context, workflowID string) (*domain.WorkflowState, error) {
+			return nil, &state.NotFoundError{Entity: "workflow", ID: workflowID}
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	_, err := svc.GetWorkflow(context.Background(), &arlov1.GetWorkflowRequest{WorkflowId: ""})
+
+	if err == nil {
+		t.Fatal("expected NotFound error for empty workflow ID")
+	}
+	if gRPCStatus(err) != codes.NotFound {
+		t.Errorf("expected NotFound, got %v", gRPCStatus(err))
+	}
+}
+
+// TestGetWorkflowSnapshot_EmptyID verifies that an empty workflow snapshot ID returns NotFound.
+func TestGetWorkflowSnapshot_EmptyID(t *testing.T) {
+	ss := &mockStateStore{
+		getWorkflowFn: func(ctx context.Context, workflowID string) (*domain.WorkflowState, error) {
+			return nil, &state.NotFoundError{Entity: "workflow", ID: workflowID}
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	_, err := svc.GetWorkflowSnapshot(context.Background(), &arlov1.GetWorkflowSnapshotRequest{WorkflowId: ""})
+
+	if err == nil {
+		t.Fatal("expected NotFound error for empty workflow snapshot ID")
+	}
+	if gRPCStatus(err) != codes.NotFound {
+		t.Errorf("expected NotFound, got %v", gRPCStatus(err))
+	}
+}
+
+// TestGetSession_EmptyID verifies that an empty session ID returns NotFound.
+func TestGetSession_EmptyID(t *testing.T) {
+	ss := &mockStateStore{
+		getNodeStateBySessionFn: func(ctx context.Context, sessionID string) (*domain.NodeState, error) {
+			return nil, &state.NotFoundError{Entity: "session", ID: sessionID}
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	_, err := svc.GetSession(context.Background(), &arlov1.GetSessionRequest{SessionId: ""})
+
+	if err == nil {
+		t.Fatal("expected NotFound error for empty session ID")
+	}
+	if gRPCStatus(err) != codes.NotFound {
+		t.Errorf("expected NotFound, got %v", gRPCStatus(err))
+	}
+}
+
+// TestSubscribeEvents_InvalidPosition verifies that a negative fromPosition
+// does not cause a crash. The position is passed through to the event store's
+// Subscribe method, which treats it as an opaque value.
+func TestSubscribeEvents_InvalidPosition(t *testing.T) {
+	var receivedPos int64
+	es := &mockEventStore{
+		subscribeFn: func(ctx context.Context, fromPosition int64) (<-chan store.Event, error) {
+			receivedPos = fromPosition
+			ch := make(chan store.Event)
+			close(ch)
+			return ch, nil
+		},
+	}
+	svc := newTestService(es, nil, nil, nil, nil)
+	collector := &eventCollector{}
+
+	// Negative position: should be accepted (the store may treat it as 0).
+	err := svc.SubscribeEvents(&arlov1.SubscribeEventsRequest{
+		FromPosition: -1,
+	}, collector)
+
+	if err != nil {
+		t.Fatalf("unexpected error for negative fromPosition: %v", err)
+	}
+	// The negative value is passed to the store, but the service doesn't reject it.
+	if receivedPos != -1 {
+		t.Logf("fromPosition %d passed through to store (store may clamp it)", receivedPos)
+	}
+}
+
+// TestSendPTYInput_EmptyData verifies that sending empty data is a no-op
+// and does not panic or error.
+func TestSendPTYInput_EmptyData(t *testing.T) {
+	var receivedData []byte
+	rm := &mockRuntimeManager{
+		attachInstanceFn: func(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
+			return nil, &testWriter{fn: func(p []byte) (int, error) {
+				receivedData = append(receivedData, p...)
+				return len(p), nil
+			}}, nil
+		},
+	}
+	svc := newTestService(nil, nil, nil, nil, rm)
+
+	_, err := svc.SendPTYInput(context.Background(), &arlov1.SendPTYInputRequest{
+		SessionId: "sess-1",
+		Data:      []byte{},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error for empty data: %v", err)
+	}
+	// Empty write should result in no data written or zero-length data.
+	if len(receivedData) != 0 {
+		t.Errorf("expected no data written, got %d bytes: %q", len(receivedData), string(receivedData))
+	}
+}
+
+// TestSendPTYInput_NilData verifies that nil data is accepted without panic.
+func TestSendPTYInput_NilData(t *testing.T) {
+	rm := &mockRuntimeManager{
+		attachInstanceFn: func(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
+			return nil, &testWriter{fn: func(p []byte) (int, error) {
+				return len(p), nil
+			}}, nil
+		},
+	}
+	svc := newTestService(nil, nil, nil, nil, rm)
+
+	_, err := svc.SendPTYInput(context.Background(), &arlov1.SendPTYInputRequest{
+		SessionId: "sess-1",
+		Data:      nil,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error for nil data: %v", err)
+	}
+}
+
+// TestExecuteCommand_EmptyCommand verifies that an empty command string
+// returns an error message (falls into the unknown command default case).
+func TestExecuteCommand_EmptyCommand(t *testing.T) {
+	svc := newTestService(&mockEventStore{}, &mockStateStore{}, nil, nil, nil)
+
+	resp, err := svc.ExecuteCommand(context.Background(), &arlov1.CommandRequest{
+		Command: "",
+		Target:  "x",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Success {
+		t.Error("expected Success=false for empty command")
+	}
+	if !strings.Contains(resp.Message, "unknown command") {
+		t.Errorf("expected message to mention 'unknown command', got %q", resp.Message)
+	}
+}
+
+// TestExecuteCommand_EmptyTarget verifies that an empty target for a command
+// that requires a lookup (like "approve") returns a non-success response
+// with an error message, rather than crashing.
+func TestExecuteCommand_EmptyTarget(t *testing.T) {
+	ss := &mockStateStore{
+		getNodeStateFn: func(ctx context.Context, nodeID string) (*domain.NodeState, error) {
+			// Empty node ID triggers a lookup that fails.
+			if nodeID == "" {
+				return nil, errors.New("empty node ID")
+			}
+			return nil, &state.NotFoundError{Entity: "node", ID: nodeID}
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	resp, err := svc.ExecuteCommand(context.Background(), &arlov1.CommandRequest{
+		Command: "approve",
+		Target:  "",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Success {
+		t.Error("expected Success=false for empty target")
+	}
+	if resp.Message == "" {
+		t.Error("expected non-empty error message for empty target")
+	}
+}
+
+// TestExecuteCommand_CancelEmptyTarget verifies that cancel_task with
+// an empty target also produces an error message.
+func TestExecuteCommand_CancelEmptyTarget(t *testing.T) {
+	es := &mockEventStore{
+		appendFn: func(ctx context.Context, streamID string, events []store.Event) ([]int64, error) {
+			// An empty-target cancel writes to "workflow-" which may be invalid
+			// in real stores. Simulate this edge case.
+			if streamID == "workflow-" {
+				return nil, errors.New("invalid stream: empty workflow ID")
+			}
+			return []int64{1}, nil
+		},
+	}
+	svc := newTestService(es, &mockStateStore{}, nil, nil, nil)
+
+	resp, err := svc.ExecuteCommand(context.Background(), &arlov1.CommandRequest{
+		Command: "cancel_task",
+		Target:  "",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Success {
+		t.Error("expected Success=false for cancel with empty target")
+	}
+}
+
+// TestServiceConstructor_NilDeps verifies that the service constructor
+// accepts nil dependencies without panicking.
+func TestServiceConstructor_NilDeps(t *testing.T) {
+	// All deps nil: should not panic.
+	svc := New(nil, nil, nil, nil, nil)
+	if svc == nil {
+		t.Fatal("New() returned nil")
+	}
+
+	// Partial deps: some non-nil, some nil.
+	svc2 := New(&mockEventStore{}, nil, nil, nil, nil)
+	if svc2 == nil {
+		t.Fatal("New() with partial deps returned nil")
+	}
+}
+
+// TestServiceConstructor_PartialDeps verifies that partial dependency
+// wiring works correctly.
+func TestServiceConstructor_PartialDeps(t *testing.T) {
+	// Service with only eventStore and stateStore (common for read-only endpoints).
+	svc := New(&mockEventStore{}, &mockStateStore{}, nil, nil, nil)
+	if svc == nil {
+		t.Fatal("New() with partial deps returned nil")
+	}
+
+	// A service with only runtimeMgr should work for PTY methods.
+	svc2 := New(nil, nil, nil, nil, &mockRuntimeManager{})
+	if svc2 == nil {
+		t.Fatal("New() with only runtimeMgr returned nil")
+	}
+}
+
+// TestListTasks_EmptyResult verifies that ListTasks returns an empty list
+// when ListActiveWorkflows returns nil (not an error). Note: when no workflows
+// are returned, the Tasks slice is nil rather than empty — the protobuf
+// marshalling layer handles this correctly for wire transfer.
+func TestListTasks_EmptyResult(t *testing.T) {
+	ss := &mockStateStore{
+		listActiveWorkflowsFn: func(ctx context.Context) ([]domain.WorkflowState, error) {
+			return nil, nil // nil slice, not empty slice
+		},
+	}
+	svc := newTestService(&mockEventStore{}, ss, nil, nil, nil)
+
+	resp, err := svc.ListTasks(context.Background(), &arlov1.ListTasksRequest{})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// When no workflows exist, tasks will be nil (not appended to).
+	// This is fine — protobuf marshals nil slices the same as empty slices on the wire.
+	if len(resp.Tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(resp.Tasks))
+	}
+}
+
+// TestAttachPTY_NonexistentSession verifies that attaching to a session
+// that does not exist in the runtime manager returns Unavailable.
+func TestAttachPTY_NonexistentSession(t *testing.T) {
+	rm := &mockRuntimeManager{
+		attachInstanceFn: func(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
+			return nil, nil, errors.New("session sess-nonexistent not found")
+		},
+	}
+	svc := newTestService(nil, nil, nil, nil, rm)
+
+	err := svc.AttachPTY(&arlov1.AttachPTYRequest{SessionId: "sess-nonexistent"}, &ptyCollector{})
+
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+	if gRPCStatus(err) != codes.Unavailable {
+		t.Errorf("expected Unavailable, got %v", gRPCStatus(err))
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected error to indicate session not found, got: %v", err)
+	}
+}
+
+// TestAttachPTY_EmptySessionID verifies that an empty session ID in AttachPTY
+// is treated gracefully.
+func TestAttachPTY_EmptySessionID(t *testing.T) {
+	rm := &mockRuntimeManager{
+		attachInstanceFn: func(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
+			return nil, nil, errors.New("empty session ID not valid")
+		},
+	}
+	svc := newTestService(nil, nil, nil, nil, rm)
+
+	err := svc.AttachPTY(&arlov1.AttachPTYRequest{SessionId: ""}, &ptyCollector{})
+
+	if err == nil {
+		t.Fatal("expected error for empty session ID")
+	}
+	if gRPCStatus(err) != codes.Unavailable {
+		t.Errorf("expected Unavailable, got %v", gRPCStatus(err))
 	}
 }
