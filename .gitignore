@@ -40,5 +40,8 @@ Thumbs.db
 /tmp/
 scripts/
 .worktrees/
-*.report.md
+# Runtime output and logs
+*-report.md
 architecture-review.md
+.runtime/
+.arlo/
