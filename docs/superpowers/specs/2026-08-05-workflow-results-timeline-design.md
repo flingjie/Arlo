@@ -61,8 +61,8 @@ Results []WorkflowResult
 YAML compile (`internal/workflow`):
 
 - Parse `results` into `ExecutableGraph.Results`.
-- Validate: each `node` exists in the graph; `artifact` is non-empty.
-- Optional soft check: if the skill resolves, warn/error when `artifact` is not in that skill’s `output` list. Prefer hard error at Validate time when skill registry is available; otherwise skip.
+- Validate (v1): each `node` exists in the graph; `artifact` is non-empty.
+- Skill `output` cross-check (does this filename appear on the skill?) is a follow-up — not required for this change.
 
 Missing `results` → empty slice → current behavior unchanged.
 
