@@ -292,7 +292,7 @@ func TestCompleteWorkflowEmitsResultPaths(t *testing.T) {
 	}
 	ss.Rebuild(ctx)
 
-	events, err := es.Read(ctx, "workflow-"+wfID, 0, 100)
+	events, err := es.Read(ctx, "workflow-"+wfID, 0)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
