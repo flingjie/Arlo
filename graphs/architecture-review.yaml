@@ -42,5 +42,9 @@ nodes:
     retry:
       max_retries: 1
 
+results:
+  - node: review
+    artifact: architecture-review.md
+
 policy:
   max_concurrent_nodes: 1
