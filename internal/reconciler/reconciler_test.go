@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -511,6 +512,23 @@ nodes:
     retry:
       max_retries: 1
 
+policy:
+  max_concurrent_nodes: 1
+`
+
+const resultsYAML = `
+name: results-demo
+version: 1
+nodes:
+  - id: review
+    skill: architecture-review
+    runtime:
+      provider: claude-code
+    retry:
+      max_retries: 1
+results:
+  - node: review
+    artifact: architecture-review.md
 policy:
   max_concurrent_nodes: 1
 `
@@ -1077,5 +1095,61 @@ func TestLaunchRuntimeSuccessEmitsAnnotation(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected runtime.launch NODE_ANNOTATED after successful launch")
+	}
+}
+
+func TestCompleteWorkflowEmitsResultPaths(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t)
+	_, wfID := seedWorkflow(t, es, ss, r, eng, resultsYAML, "t-results")
+
+	// Start then complete the only node.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("reconcile start: %v", err)
+	}
+	ss.Rebuild(ctx)
+
+	ns, err := ss.GetNodeState(ctx, "review")
+	if err != nil {
+		t.Fatalf("GetNodeState: %v", err)
+	}
+	appendEvent(t, es, "node-review", store.EventNodeCompleted, domain.NodeCompleted{
+		NodeID: "review", SessionID: ns.SessionID,
+	})
+	ss.Rebuild(ctx)
+
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("reconcile complete: %v", err)
+	}
+	ss.Rebuild(ctx)
+
+	events, err := es.Read(ctx, "workflow-"+wfID, 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	var found bool
+	for _, ev := range events {
+		if ev.Type != store.EventTaskCompleted {
+			continue
+		}
+		found = true
+		var payload domain.TaskCompleted
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(payload.Results) != 1 {
+			t.Fatalf("Results len = %d, want 1", len(payload.Results))
+		}
+		got := payload.Results[0]
+		if got.NodeID != "review" || got.Artifact != "architecture-review.md" {
+			t.Errorf("result = %+v", got)
+		}
+		wantPath := filepath.Join(workDir(), "architecture-review.md")
+		if got.Path != wantPath {
+			t.Errorf("Path = %q, want %q", got.Path, wantPath)
+		}
+	}
+	if !found {
+		t.Fatal("TASK_COMPLETED not found")
 	}
 }

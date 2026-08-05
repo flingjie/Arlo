@@ -671,7 +671,18 @@ func (r *Reconciler) executeCompleteWorkflow(ctx context.Context, workflowID str
 		return nil
 	}
 
-	payload, _ := json.Marshal(domain.TaskCompleted{TaskID: workflowID})
+	completed := domain.TaskCompleted{TaskID: workflowID}
+	if graph := r.graphRegistry[workflowID]; graph != nil {
+		wd := workDir()
+		for _, res := range graph.Results {
+			completed.Results = append(completed.Results, domain.WorkflowResultRef{
+				NodeID:   res.NodeID,
+				Artifact: res.Artifact,
+				Path:     filepath.Join(wd, res.Artifact),
+			})
+		}
+	}
+	payload, _ := json.Marshal(completed)
 
 	event := store.Event{
 		ID:       fmt.Sprintf("evt-wc-%s-%d", workflowID, time.Now().UnixNano()),
