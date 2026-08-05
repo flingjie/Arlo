@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
 )
@@ -14,8 +15,11 @@ import (
 // active instances.
 type Manager struct {
 	mu        sync.RWMutex
-	adapters  map[domain.RuntimeProvider]Adapter       // type → adapter
-	instances map[string]*domain.RuntimeInstance        // instanceID → instance
+	adapters  map[domain.RuntimeProvider]Adapter // type → adapter
+	instances map[string]*domain.RuntimeInstance  // instanceID → instance
+
+	obsMu     sync.Mutex
+	observers map[string][]chan RuntimeEvent // instanceID → observer channels
 }
 
 // NewManager creates a new RuntimeManager.
@@ -23,6 +27,7 @@ func NewManager() *Manager {
 	return &Manager{
 		adapters:  make(map[domain.RuntimeProvider]Adapter),
 		instances: make(map[string]*domain.RuntimeInstance),
+		observers: make(map[string][]chan RuntimeEvent),
 	}
 }
 
@@ -58,6 +63,7 @@ func (m *Manager) StartInstance(ctx context.Context, spec RuntimeSpec) (*domain.
 		WorkDir:     spec.WorkDir,
 		Prompt:      spec.Prompt,
 		State:       domain.RuntimeStatePreparing,
+		StartedAt:   time.Now(),
 	}
 	m.instances[inst.ID] = inst
 	m.mu.Unlock()
@@ -137,6 +143,61 @@ func (m *Manager) MarkExited(id string, exitCode int, metrics domain.RuntimeMetr
 		inst.State = domain.RuntimeStateExited
 		inst.ExitCode = exitCode
 		inst.Metrics = metrics
+	}
+}
+
+// ReportEvent is called by adapters to emit a real-time RuntimeEvent.
+// It updates the instance's CurrentAction / LastEventAt and fans out the
+// event to all observer channels registered for the instance.
+func (m *Manager) ReportEvent(id string, event RuntimeEvent) {
+	m.mu.Lock()
+	if inst, ok := m.instances[id]; ok {
+		inst.LastEventAt = event.Timestamp
+		inst.CurrentAction = event.Action
+	}
+	m.mu.Unlock()
+
+	m.obsMu.Lock()
+	defer m.obsMu.Unlock()
+	for _, ch := range m.observers[id] {
+		select {
+		case ch <- event:
+		default:
+			// Drop if channel buffer is full (non-blocking fan-out).
+		}
+	}
+}
+
+// Observe returns a channel that receives RuntimeEvents for the given
+// instance ID. Call StopObserving when done to prevent goroutine leaks.
+func (m *Manager) Observe(id string) <-chan RuntimeEvent {
+	ch := make(chan RuntimeEvent, 64)
+
+	m.obsMu.Lock()
+	defer m.obsMu.Unlock()
+	m.observers[id] = append(m.observers[id], ch)
+
+	return ch
+}
+
+// StopObserving removes an observer channel for the given instance ID.
+// After this call, no further events will be sent to the channel.
+func (m *Manager) StopObserving(id string, ch <-chan RuntimeEvent) {
+	m.obsMu.Lock()
+	defer m.obsMu.Unlock()
+
+	channels := m.observers[id]
+	for i, oc := range channels {
+		if (<-chan RuntimeEvent)(oc) == ch {
+			// Remove by replacing with the last element and truncating.
+			channels[i] = channels[len(channels)-1]
+			m.observers[id] = channels[:len(channels)-1]
+			close(oc)
+			break
+		}
+	}
+	if len(m.observers[id]) == 0 {
+		delete(m.observers, id)
 	}
 }
 

@@ -533,6 +533,19 @@ policy:
   max_concurrent_nodes: 1
 `
 
+const noRetryYAML = `
+name: no-retry
+version: 1
+nodes:
+  - id: step1
+    skill: root-cause
+    runtime:
+      provider: claude-code
+    retry:
+      max_retries: 0
+      backoff: 10s
+`
+
 // ── Integration Tests for New Decision Types ─────
 
 // TestReconcilePauseNode verifies the reconciler pauses a gated RUNNING node.
@@ -1181,4 +1194,218 @@ func TestGraphRegistryConcurrent(t *testing.T) {
 	}
 
 	<-done
+}
+
+// ── Heartbeat / Stuck Detection Tests ────────────
+
+// newTestReconcilerWithRuntime creates a reconciler with a real runtime manager
+// and a registered adapter that successfully starts instances.
+func newTestReconcilerWithRuntime(t *testing.T) (*Reconciler, *store.SQLiteStore, *state.InMemoryStateStore, *workflow.Engine, *runtime.Manager) {
+	t.Helper()
+
+	es, err := store.NewSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { es.Close() })
+
+	ss := state.NewInMemoryStateStore(es)
+	eng := workflow.NewEngine()
+	mgr := runtime.NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &failingAdapter{startErr: nil})
+	r := New(ss, es, eng, mgr, nil, nil).WithTickInterval(100 * time.Millisecond)
+
+	return r, es, ss, eng, mgr
+}
+
+// seedWorkflowRunning creates a workflow, starts its first node, and returns the wfID.
+func seedWorkflowRunning(t *testing.T, es *store.SQLiteStore, ss *state.InMemoryStateStore, r *Reconciler, eng *workflow.Engine, mgr *runtime.Manager, yamlSource string, taskID string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, yamlSource, taskID)
+
+	// Start an instance on the runtime manager so GetInstance works.
+	// The instance ID matches mkInstanceID for the first node.
+	graph, _ := eng.Compile(ctx, []byte(yamlSource))
+	nodeID := graph.Nodes[0].ID
+	instanceID := mkInstanceID(nodeID, 1) // retryCount 0 + 1 = attempt 1
+	_, err := mgr.StartInstance(ctx, runtime.RuntimeSpec{
+		InstanceID: instanceID,
+		Type:       domain.RuntimeProviderClaudeCode,
+		Config:     domain.RuntimeConfig{Model: "test-model", PermissionMode: "auto"},
+		SessionID:  mkSessionID(nodeID, 1),
+		WorkDir:    workDir(),
+		Prompt:     "test prompt",
+	})
+	if err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+
+	// Transition the node to RUNNING by emitting NODE_STARTED.
+	nsBefore, _ := ss.GetNodeState(ctx, nodeID)
+	if nsBefore.Status == domain.NodeStatusPending {
+		appendEvent(t, es, "node-"+nodeID, store.EventNodeStarted, domain.NodeStarted{
+			NodeID: nodeID, WorkflowID: wfID, SessionID: mkSessionID(nodeID, 1),
+		})
+		ss.Rebuild(ctx)
+	}
+
+	return wfID
+}
+
+// TestCheckHeartbeats_StuckNode verifies that a RUNNING node with an old
+// LastEventAt (falling back to StartedAt) gets NODE_FAILED emitted.
+func TestCheckHeartbeats_StuckNode(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	// Set heartbeat timeout to a very small value so the node is immediately "stuck".
+	r.HeartbeatTimeout = 1 * time.Nanosecond
+
+	// Lower max_retries to 1 so the stuck detection is retryable on first pass.
+	// (Engine defaults max_retries=0 → 1.)
+	wfID := seedWorkflowRunning(t, es, ss, r, eng, mgr, noRetryYAML, "t-stuck")
+
+	// Verify the node is RUNNING before reconcile.
+	ns, _ := ss.GetNodeState(ctx, "step1")
+	if ns.Status != domain.NodeStatusRunning {
+		t.Fatalf("expected RUNNING before stuck check, got %s", ns.Status)
+	}
+
+	// Reconcile — checkHeartbeats should detect stuck and emit NODE_FAILED.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Read events to verify NODE_FAILED was emitted.
+	events, err := es.Read(ctx, "node-step1", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	var foundFailed bool
+	for _, ev := range events {
+		if ev.Type != store.EventNodeFailed {
+			continue
+		}
+		var payload domain.NodeFailed
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if strings.Contains(payload.Reason, "stuck") {
+			foundFailed = true
+			if !payload.Retryable {
+				t.Error("expected retryable failure (max_retries=1, retryCount=0)")
+			}
+			t.Logf("NODE_FAILED reason: %s", payload.Reason)
+			break
+		}
+	}
+	if !foundFailed {
+		t.Fatal("expected NODE_FAILED with 'stuck' reason, but none found")
+	}
+}
+
+// TestCheckHeartbeats_ActiveNode verifies that a RUNNING node with a recent
+// LastEventAt does NOT get marked as failed.
+func TestCheckHeartbeats_ActiveNode(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	// Use default HeartbeatTimeout (10 min) — the node was just started, so it should be active.
+	wfID := seedWorkflowRunning(t, es, ss, r, eng, mgr, bugfixYAML, "t-active")
+
+	// Also report an event to set LastEventAt, making it definitely active.
+	mgr.ReportEvent("rt-analyze-1", runtime.RuntimeEvent{
+		Type:      "heartbeat",
+		Action:    "running",
+		Timestamp: time.Now(),
+	})
+
+	// Verify the node is RUNNING.
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusRunning {
+		t.Fatalf("expected RUNNING, got %s", ns.Status)
+	}
+
+	// Count NODE_FAILED events before reconcile.
+	eventsBefore, _ := es.Read(ctx, "node-analyze", 0)
+	failCountBefore := 0
+	for _, ev := range eventsBefore {
+		if ev.Type == store.EventNodeFailed {
+			failCountBefore++
+		}
+	}
+
+	// Reconcile — should NOT emit NODE_FAILED since the node is active.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Verify no new NODE_FAILED events.
+	eventsAfter, err := es.Read(ctx, "node-analyze", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	failCountAfter := 0
+	for _, ev := range eventsAfter {
+		if ev.Type == store.EventNodeFailed {
+			failCountAfter++
+		}
+	}
+	if failCountAfter > failCountBefore {
+		t.Errorf("expected no new NODE_FAILED events, got %d (was %d)",
+			failCountAfter, failCountBefore)
+	}
+}
+
+// TestCheckHeartbeats_NoRuntimeMgr verifies that checkHeartbeats is a no-op
+// when the runtime manager is nil.
+func TestCheckHeartbeats_NoRuntimeMgr(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng := newTestReconciler(t) // runtimeMgr is nil
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t-nomgr")
+
+	// Manually transition the first node to RUNNING.
+	appendEvent(t, es, "node-analyze", store.EventNodeStarted, domain.NodeStarted{
+		NodeID: "analyze", WorkflowID: wfID, SessionID: "sess-analyze-1",
+	})
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "analyze")
+	if ns.Status != domain.NodeStatusRunning {
+		t.Fatalf("expected RUNNING, got %s", ns.Status)
+	}
+
+	// Count NODE_FAILED events before reconcile.
+	eventsBefore, _ := es.Read(ctx, "node-analyze", 0)
+	failCountBefore := 0
+	for _, ev := range eventsBefore {
+		if ev.Type == store.EventNodeFailed {
+			failCountBefore++
+		}
+	}
+
+	// Reconcile — should not panic and should not emit NODE_FAILED from heartbeats.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Verify no new NODE_FAILED events.
+	eventsAfter, err := es.Read(ctx, "node-analyze", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	failCountAfter := 0
+	for _, ev := range eventsAfter {
+		if ev.Type == store.EventNodeFailed {
+			failCountAfter++
+		}
+	}
+	if failCountAfter > failCountBefore {
+		t.Errorf("expected no NODE_FAILED when runtimeMgr is nil, got %d (was %d)",
+			failCountAfter, failCountBefore)
+	}
 }

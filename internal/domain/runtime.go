@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // RuntimeProvider identifies an agent runtime implementation.
 type RuntimeProvider string
 
@@ -25,31 +27,34 @@ const (
 
 // RuntimeInstance represents a running agent process.
 type RuntimeInstance struct {
-	ID          string          `json:"id"`
-	Type        RuntimeProvider `json:"type"`
-	Config      RuntimeConfig   `json:"config"`
-	SessionID   string          `json:"session_id"`
-	WorkspaceID string          `json:"workspace_id"`
-	SlotID      string          `json:"slot_id"`
-	WorkDir     string          `json:"work_dir"`
-	Prompt      string          `json:"prompt"`
-	State       RuntimeState    `json:"state"`
-	ExitCode    int             `json:"exit_code,omitempty"`
-	Metrics     RuntimeMetrics  `json:"metrics,omitempty"`
+	ID            string          `json:"id"`
+	Type          RuntimeProvider `json:"type"`
+	Config        RuntimeConfig   `json:"config"`
+	SessionID     string          `json:"session_id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	SlotID        string          `json:"slot_id"`
+	WorkDir       string          `json:"work_dir"`
+	Prompt        string          `json:"prompt"`
+	State         RuntimeState    `json:"state"`
+	ExitCode      int             `json:"exit_code,omitempty"`
+	Metrics       RuntimeMetrics  `json:"metrics,omitempty"`
+	StartedAt     time.Time       `json:"started_at,omitempty"`
+	LastEventAt   time.Time       `json:"last_event_at,omitempty"`
+	CurrentAction string          `json:"current_action,omitempty"`
 }
 
 // RuntimeConfig configures how an agent runtime behaves.
 type RuntimeConfig struct {
 	Model          string   `json:"model,omitempty"`
-	Capabilities   []string `json:"capabilities,omitempty"`   // "filesystem", "git", "browser"
+	Capabilities   []string `json:"capabilities,omitempty"`    // "filesystem", "git", "browser"
 	PermissionMode string   `json:"permission_mode,omitempty"` // "auto", "manual"
 }
 
 // RuntimeStatus is the observable status of a RuntimeInstance.
 // PID is intentionally excluded — it's an implementation detail.
 type RuntimeStatus struct {
-	ID      string        `json:"id"`
-	State   RuntimeState  `json:"state"`
+	ID      string         `json:"id"`
+	State   RuntimeState   `json:"state"`
 	Metrics RuntimeMetrics `json:"metrics"`
 }
 
@@ -67,7 +72,7 @@ type RuntimeMetrics struct {
 
 // Instruction is a control message sent to a running agent.
 type Instruction struct {
-	Type    string `json:"type"`    // "approve", "reject", "hint", "context"
+	Type    string `json:"type"` // "approve", "reject", "hint", "context"
 	Content string `json:"content"`
 }
 

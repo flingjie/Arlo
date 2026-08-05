@@ -11,6 +11,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
 )
@@ -41,4 +42,29 @@ type Adapter interface {
 type InteractiveRuntime interface {
 	// Attach returns a reader for the PTY output stream and a writer for stdin input.
 	Attach(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error)
+}
+
+// RuntimeEventType categorizes real-time events emitted by a running agent.
+type RuntimeEventType string
+
+const (
+	RuntimeEventThinking    RuntimeEventType = "THINKING"
+	RuntimeEventToolCall    RuntimeEventType = "TOOL_CALL"
+	RuntimeEventToolResult  RuntimeEventType = "TOOL_RESULT"
+	RuntimeEventFileChanged RuntimeEventType = "FILE_CHANGED"
+	RuntimeEventCommandExec RuntimeEventType = "COMMAND_EXEC"
+	RuntimeEventTokenUsage  RuntimeEventType = "TOKEN_USAGE"
+	RuntimeEventError       RuntimeEventType = "ERROR"
+	RuntimeEventCompleted   RuntimeEventType = "COMPLETED"
+)
+
+// RuntimeEvent is a structured observation emitted by a runtime adapter.
+type RuntimeEvent struct {
+	Type      RuntimeEventType `json:"type"`
+	RuntimeID string           `json:"runtime_id"`
+	Action    string           `json:"action"`              // human-readable: "running pytest"
+	ToolName  string           `json:"tool_name,omitempty"`
+	FilePath  string           `json:"file_path,omitempty"`
+	Detail    string           `json:"detail,omitempty"`    // e.g., command output preview
+	Timestamp time.Time        `json:"timestamp"`
 }

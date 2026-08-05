@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
 )
@@ -301,5 +302,137 @@ func TestConcurrentStartInstanceStress(t *testing.T) {
 
 	if successes != 1 {
 		t.Errorf("expected exactly 1 successful start, got %d", successes)
+	}
+}
+
+// TestReportEvent verifies that ReportEvent updates the instance's CurrentAction and LastEventAt.
+func TestReportEvent(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	inst, err := mgr.StartInstance(ctx, RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+
+	ev := RuntimeEvent{
+		Type:      RuntimeEventToolCall,
+		RuntimeID: inst.ID,
+		Action:    "running pytest",
+		ToolName:  "bash",
+		Timestamp: time.Now(),
+	}
+	mgr.ReportEvent(inst.ID, ev)
+
+	// Fetch the instance and verify the fields were updated.
+	updated, err := mgr.GetInstance(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("GetInstance: %v", err)
+	}
+	if updated.CurrentAction != "running pytest" {
+		t.Errorf("CurrentAction = %q, want %q", updated.CurrentAction, "running pytest")
+	}
+	if updated.LastEventAt.IsZero() {
+		t.Error("LastEventAt should not be zero after ReportEvent")
+	}
+}
+
+// TestObserveReceivesEvents verifies that an observer channel receives reported events.
+func TestObserveReceivesEvents(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	inst, err := mgr.StartInstance(ctx, RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+
+	ch := mgr.Observe(inst.ID)
+
+	ev := RuntimeEvent{
+		Type:      RuntimeEventFileChanged,
+		RuntimeID: inst.ID,
+		Action:    "editing auth.go",
+		FilePath:  "/src/auth.go",
+		Timestamp: time.Now(),
+	}
+	mgr.ReportEvent(inst.ID, ev)
+
+	select {
+	case received := <-ch:
+		if received.Type != RuntimeEventFileChanged {
+			t.Errorf("Type = %s, want %s", received.Type, RuntimeEventFileChanged)
+		}
+		if received.Action != "editing auth.go" {
+			t.Errorf("Action = %q, want %q", received.Action, "editing auth.go")
+		}
+		if received.FilePath != "/src/auth.go" {
+			t.Errorf("FilePath = %q, want %q", received.FilePath, "/src/auth.go")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for event on observer channel")
+	}
+}
+
+// TestStopObserving verifies that after StopObserving, the channel is cleaned up
+// and subsequent events are not delivered.
+func TestStopObserving(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	inst, err := mgr.StartInstance(ctx, RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+
+	ch := mgr.Observe(inst.ID)
+	mgr.StopObserving(inst.ID, ch)
+
+	// Send an event after stopping observation — it should not arrive.
+	ev := RuntimeEvent{
+		Type:      RuntimeEventThinking,
+		RuntimeID: inst.ID,
+		Action:    "thinking",
+		Timestamp: time.Now(),
+	}
+	mgr.ReportEvent(inst.ID, ev)
+
+	// Drain any buffered events that may have landed before StopObserving.
+	// The channel was closed by StopObserving, so we read until it's closed.
+	for range ch {
+		// drain
+	}
+
+	// Now start a new observer for the same instance to verify the old channel
+	// was removed from the fan-out and new events flow to a new channel.
+	ch2 := mgr.Observe(inst.ID)
+
+	ev2 := RuntimeEvent{
+		Type:      RuntimeEventCommandExec,
+		RuntimeID: inst.ID,
+		Action:    "go build",
+		Timestamp: time.Now(),
+	}
+	mgr.ReportEvent(inst.ID, ev2)
+
+	select {
+	case received := <-ch2:
+		if received.Type != RuntimeEventCommandExec {
+			t.Errorf("Type = %s, want %s", received.Type, RuntimeEventCommandExec)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for event on new observer channel after old channel was stopped")
 	}
 }

@@ -173,3 +173,143 @@ func TestParsePiJSON_InvalidJSON(t *testing.T) {
 		t.Error("expected parse failure for invalid JSON")
 	}
 }
+
+func TestParsePiJSON_MessageEndWithToolUse(t *testing.T) {
+	// Pi's message_end for assistant with tool_use in the content array.
+	line := []byte(`{
+		"type":"message_end",
+		"message":{
+			"role":"assistant",
+			"content":[
+				{"type":"text","text":"Let me check that."},
+				{"type":"tool_use","name":"Bash","id":"tool_bash_1","input":{"command":"ls -la"}}
+			],
+			"usage":{"input":200,"output":50,"totalTokens":500}
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.ToolName != "Bash" {
+		t.Errorf("ToolName = %q, want Bash", ev.ToolName)
+	}
+	if ev.ToolID != "tool_bash_1" {
+		t.Errorf("ToolID = %q, want tool_bash_1", ev.ToolID)
+	}
+	if ev.ToolInput == nil {
+		t.Error("ToolInput should not be nil")
+	}
+	if ev.TokensIn != 200 || ev.TokensOut != 50 {
+		t.Errorf("tokens = %d/%d, want 200/50", ev.TokensIn, ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_MessageEndWithoutToolUse(t *testing.T) {
+	// Pi's message_end for assistant with only text content (no tool calls).
+	line := []byte(`{
+		"type":"message_end",
+		"message":{
+			"role":"assistant",
+			"content":[
+				{"type":"text","text":"Hello! How can I help?"}
+			],
+			"usage":{"input":50,"output":30,"totalTokens":100}
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.ToolName != "" {
+		t.Errorf("ToolName = %q, want empty (no tool call)", ev.ToolName)
+	}
+	if ev.ToolID != "" {
+		t.Errorf("ToolID = %q, want empty (no tool call)", ev.ToolID)
+	}
+	if ev.TokensIn != 50 || ev.TokensOut != 30 {
+		t.Errorf("tokens = %d/%d, want 50/30", ev.TokensIn, ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_TurnEndWithToolUse(t *testing.T) {
+	// Pi's turn_end may also carry content with tool_use.
+	line := []byte(`{
+		"type":"turn_end",
+		"message":{
+			"role":"assistant",
+			"content":[
+				{"type":"text","text":"Done."},
+				{"type":"tool_use","name":"Write","id":"tool_write_1","input":{"file_path":"/tmp/out.txt","content":"done"}}
+			],
+			"usage":{"input":100,"output":80,"totalTokens":300}
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.ToolName != "Write" {
+		t.Errorf("ToolName = %q, want Write", ev.ToolName)
+	}
+	if ev.ToolID != "tool_write_1" {
+		t.Errorf("ToolID = %q, want tool_write_1", ev.ToolID)
+	}
+}
+
+func TestParsePiJSON_MessageEndToolResult(t *testing.T) {
+	// Pi's message_end for toolResult role — should not count as tool call
+	// and should not count tokens (role is not assistant).
+	line := []byte(`{
+		"type":"message_end",
+		"message":{
+			"role":"toolResult",
+			"content":[
+				{"type":"text","text":"file content here..."}
+			],
+			"usage":null
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.ToolName != "agent-tool" {
+		t.Errorf("ToolName = %q, want agent-tool (toolResult indicates tool was invoked)", ev.ToolName)
+	}
+	if ev.TokensIn != 0 || ev.TokensOut != 0 {
+		t.Errorf("tokens = %d/%d, want 0/0 (no tokens for non-assistant)", ev.TokensIn, ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_MessageStartWithToolUse(t *testing.T) {
+	// Pi's message_start for assistant may contain tool_use in the content array
+	// before the message_end with usage data arrives.
+	line := []byte(`{
+		"type":"message_start",
+		"message":{
+			"role":"assistant",
+			"content":[
+				{"type":"tool_use","name":"Read","id":"tool_read_1","input":{"file_path":"/src/main.go"}}
+			]
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.Type != "message_start" {
+		t.Errorf("type = %q, want message_start", ev.Type)
+	}
+	if ev.ToolName != "Read" {
+		t.Errorf("ToolName = %q, want Read", ev.ToolName)
+	}
+	if ev.ToolID != "tool_read_1" {
+		t.Errorf("ToolID = %q, want tool_read_1", ev.ToolID)
+	}
+}

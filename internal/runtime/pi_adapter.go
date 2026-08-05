@@ -174,6 +174,17 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 				}
 				if event.ToolName != "" {
 					cum.toolCalls++
+
+					// Emit real-time RuntimeEvent for tool calls.
+					if a.mgr != nil {
+						a.mgr.ReportEvent(inst.ID, RuntimeEvent{
+							Type:      RuntimeEventToolCall,
+							RuntimeID: inst.ID,
+							Action:    event.ToolName,
+							ToolName:  event.ToolName,
+							Timestamp: time.Now(),
+						})
+					}
 				}
 			}
 		}

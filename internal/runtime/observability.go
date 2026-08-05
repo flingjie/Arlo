@@ -163,6 +163,7 @@ func truncate(s string, n int) string {
 // ParsePiJSON reads one line of Pi stream-json output and returns a StreamEvent.
 // Pi uses a different event schema from Claude:
 //
+//	message_start (role=assistant) → content may include tool_use blocks
 //	message_end (role=assistant) → usage.input, usage.output, usage.totalTokens
 //	turn_end → same usage as final assistant message_end
 //	agent_end → final event, no usage
@@ -183,6 +184,8 @@ func ParsePiJSON(line []byte) (StreamEvent, bool) {
 	}
 
 	switch raw.Type {
+	case "message_start":
+		event.parsePiMessageEnd(raw.Message)
 	case "message_end":
 		event.parsePiMessageEnd(raw.Message)
 	case "turn_end":
@@ -194,11 +197,19 @@ func ParsePiJSON(line []byte) (StreamEvent, bool) {
 	return event, true
 }
 
-// parsePiMessageEnd extracts token usage from Pi's message/turn end events.
+// parsePiMessageEnd extracts token usage and tool calls from Pi's message/turn end events.
 // Pi's usage object: {"input": N, "output": N, "totalTokens": N, "cacheRead": N, ...}
+// Pi's content array may contain tool_use items: {"type":"tool_use","name":"Bash","id":"...","input":{...}}
 func (e *StreamEvent) parsePiMessageEnd(raw json.RawMessage) {
 	var msg struct {
-		Role  string `json:"role"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type  string         `json:"type"`
+			Text  string         `json:"text"`
+			Name  string         `json:"name"`
+			ID    string         `json:"id"`
+			Input map[string]any `json:"input"`
+		} `json:"content"`
 		Usage struct {
 			Input       int64 `json:"input"`
 			Output      int64 `json:"output"`
@@ -211,9 +222,25 @@ func (e *StreamEvent) parsePiMessageEnd(raw json.RawMessage) {
 
 	// Only track assistant message usage (skip user/toolResult).
 	if msg.Role != "assistant" {
+		// Detect tool invocations even for non-assistant roles.
+		// Pi's tool execution creates message_start/message_end with role="toolResult".
+		if msg.Role == "toolResult" {
+			e.ToolName = "agent-tool"
+		}
 		return
 	}
 
 	e.TokensIn = msg.Usage.Input
 	e.TokensOut = msg.Usage.Output
+
+	for _, c := range msg.Content {
+		switch c.Type {
+		case "text":
+			e.Text = c.Text
+		case "tool_use":
+			e.ToolName = c.Name
+			e.ToolID = c.ID
+			e.ToolInput = c.Input
+		}
+	}
 }

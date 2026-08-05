@@ -47,7 +47,8 @@ type Reconciler struct {
 	graphRegistry   map[string]*domain.ExecutableGraph
 	graphRegistryMu sync.RWMutex
 
-	tickInterval time.Duration
+	tickInterval     time.Duration
+	HeartbeatTimeout time.Duration
 }
 
 // New creates a new Reconciler.
@@ -60,14 +61,15 @@ func New(
 	skillRegistry *skill.Registry,
 ) *Reconciler {
 	return &Reconciler{
-		stateStore:    stateStore,
-		eventStore:    eventStore,
-		engine:        engine,
-		runtimeMgr:    runtimeMgr,
-		workspaceMgr:  workspaceMgr,
-		skillRegistry: skillRegistry,
-		graphRegistry: make(map[string]*domain.ExecutableGraph),
-		tickInterval:  5 * time.Second,
+		stateStore:       stateStore,
+		eventStore:       eventStore,
+		engine:           engine,
+		runtimeMgr:       runtimeMgr,
+		workspaceMgr:     workspaceMgr,
+		skillRegistry:    skillRegistry,
+		graphRegistry:    make(map[string]*domain.ExecutableGraph),
+		tickInterval:     5 * time.Second,
+		HeartbeatTimeout: 10 * time.Minute,
 	}
 }
 
@@ -126,6 +128,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 	// 2. REAP — detect exited runtimes and mark nodes as COMPLETED/FAILED.
 	//    Must happen BEFORE Evaluate so newly-completed nodes unblock dependents
 	//    within the same tick.
+
+	// P0: Check for stuck nodes before reaping.
+	r.checkHeartbeats(ctx, workflowID, currentState)
+
 	r.reapRuntimes(ctx, workflowID, currentState)
 
 	// Re-read state after reaping — reaped nodes may have changed status.
@@ -159,6 +165,80 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 	}
 
 	return nil
+}
+
+// checkHeartbeats detects RUNNING nodes whose runtime hasn't emitted any event
+// for too long, and emits NODE_FAILED with a "stuck" reason.
+func (r *Reconciler) checkHeartbeats(ctx context.Context, workflowID string, state *domain.WorkflowState) {
+	if r.runtimeMgr == nil {
+		return
+	}
+
+	r.graphRegistryMu.RLock()
+	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
+	if graph == nil {
+		return
+	}
+
+	nodeMap := make(map[string]domain.ExecutableNode, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	for _, ns := range state.Nodes {
+		if ns.Status != domain.NodeStatusRunning {
+			continue
+		}
+
+		instanceID := mkInstanceID(ns.NodeID, ns.RetryCount+1)
+		inst, err := r.runtimeMgr.GetInstance(ctx, instanceID)
+		if err != nil {
+			continue // instance not found — reapRuntimes will handle it
+		}
+
+		// Determine last activity time.
+		lastActivity := inst.LastEventAt
+		if lastActivity.IsZero() {
+			lastActivity = inst.StartedAt
+		}
+
+		idleDuration := time.Since(lastActivity)
+		if idleDuration <= r.HeartbeatTimeout {
+			continue // still active
+		}
+
+		// Node is stuck.
+		maxRetries := 0
+		if gn, ok := nodeMap[ns.NodeID]; ok {
+			maxRetries = gn.Retry.MaxRetries
+		}
+
+		retryable := ns.RetryCount < maxRetries
+		reason := fmt.Sprintf("stuck (no heartbeat for %v)", idleDuration.Round(time.Second))
+		if !retryable {
+			reason = fmt.Sprintf("stuck (no heartbeat for %v, retries exhausted)", idleDuration.Round(time.Second))
+		}
+
+		slog.Warn("checkHeartbeats: node stuck, no heartbeat",
+			"workflow", workflowID,
+			"node", ns.NodeID,
+			"idle_duration", idleDuration,
+			"retryable", retryable,
+		)
+
+		if emitErr := r.emitNodeEvent(ctx, workflowID, ns, store.EventNodeFailed,
+			domain.NodeFailed{
+				NodeID:     ns.NodeID,
+				WorkflowID: workflowID,
+				SessionID:  ns.SessionID,
+				Reason:     reason,
+				Retryable:  retryable,
+			}); emitErr != nil {
+			slog.Error("checkHeartbeats: emit NODE_FAILED failed",
+				"node", ns.NodeID, "error", emitErr)
+		}
+	}
 }
 
 // reapRuntimes checks RUNNING nodes for exited runtime instances and emits
