@@ -38,6 +38,10 @@ func (m *mockAdapter) Status(ctx context.Context, id string) (domain.RuntimeStat
 	return domain.RuntimeStatus{ID: id, State: domain.RuntimeStateRunning}, nil
 }
 
+func (m *mockAdapter) Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error) {
+	return domain.RuntimeSnapshot{State: domain.RuntimeStateRunning}, nil
+}
+
 // interactiveMockAdapter extends mockAdapter with Attach support for testing.
 type interactiveMockAdapter struct {
 	mockAdapter
@@ -434,5 +438,41 @@ func TestStopObserving(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for event on new observer channel after old channel was stopped")
+	}
+}
+
+// TestSnapshotNonexistent verifies that Snapshot returns an error (not panic)
+// for a nonexistent instance ID.
+func TestSnapshotNonexistent(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+
+	_, err := mgr.Snapshot(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
+// TestSnapshotExisting verifies that Snapshot returns the current state of a
+// running instance by delegating to the correct adapter.
+func TestSnapshotExisting(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	inst, err := mgr.StartInstance(ctx, RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+	})
+	if err != nil {
+		t.Fatalf("StartInstance: %v", err)
+	}
+
+	snap, err := mgr.Snapshot(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.State != domain.RuntimeStateRunning {
+		t.Errorf("State = %s, want RUNNING", snap.State)
 	}
 }

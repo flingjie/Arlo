@@ -34,6 +34,7 @@ type piInstance struct {
 	cmd    *exec.Cmd
 	stdout *bytes.Buffer
 	stderr *bytes.Buffer
+	exited bool // set under mu write lock after cmd.Wait()
 }
 
 // NewPiAdapter creates a new Pi adapter.
@@ -201,6 +202,13 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 			}
 		}
 
+		// Mark the instance as exited under the lock.
+		a.mu.Lock()
+		if tracked, ok := a.instances[inst.ID]; ok {
+			tracked.exited = true
+		}
+		a.mu.Unlock()
+
 		// Notify the Manager so the reconciler can detect the exit.
 		if a.mgr != nil {
 			a.mgr.MarkExited(inst.ID, exitCode, domain.RuntimeMetrics{
@@ -291,4 +299,35 @@ func (a *PiAdapter) Status(ctx context.Context, id string) (domain.RuntimeStatus
 	}
 
 	return status, nil
+}
+
+// Snapshot returns the current observable state of the runtime process.
+func (a *PiAdapter) Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error) {
+	a.mu.RLock()
+	pi, ok := a.instances[id]
+	if !ok {
+		a.mu.RUnlock()
+		return domain.RuntimeSnapshot{State: domain.RuntimeStateExited}, nil
+	}
+
+	state := domain.RuntimeStateRunning
+	if pi.exited {
+		state = domain.RuntimeStateExited
+	}
+
+	// Include stdout buffer summary.
+	var lastMsg string
+	if pi.stdout != nil {
+		out := pi.stdout.String()
+		if len(out) > 500 {
+			out = out[len(out)-500:]
+		}
+		lastMsg = out
+	}
+	a.mu.RUnlock()
+
+	return domain.RuntimeSnapshot{
+		State:       state,
+		LastMessage: lastMsg,
+	}, nil
 }

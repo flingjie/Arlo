@@ -26,6 +26,13 @@ func newTestStore(t *testing.T) *SQLiteStore {
 	return s
 }
 
+// TestEventTypeRuntimeActionExists verifies the RUNTIME_ACTION event type constant exists.
+func TestEventTypeRuntimeActionExists(t *testing.T) {
+	if EventRuntimeAction != "RUNTIME_ACTION" {
+		t.Errorf("EventRuntimeAction = %q, want %q", EventRuntimeAction, "RUNTIME_ACTION")
+	}
+}
+
 // helper to create a simple event payload
 func testEvent(id string, eventType EventType, data interface{}) Event {
 	payload, _ := json.Marshal(data)

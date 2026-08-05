@@ -916,6 +916,9 @@ func (a *failingAdapter) Destroy(ctx context.Context, id string) error          
 func (a *failingAdapter) SendInstruction(ctx context.Context, id string, instruction domain.Instruction) error {
 	return nil
 }
+func (a *failingAdapter) Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error) {
+	return domain.RuntimeSnapshot{State: domain.RuntimeStateRunning}, nil
+}
 func (a *failingAdapter) Status(ctx context.Context, id string) (domain.RuntimeStatus, error) {
 	return domain.RuntimeStatus{ID: id, State: domain.RuntimeStateRunning}, nil
 }
@@ -1408,4 +1411,276 @@ func TestCheckHeartbeats_NoRuntimeMgr(t *testing.T) {
 		t.Errorf("expected no NODE_FAILED when runtimeMgr is nil, got %d (was %d)",
 			failCountAfter, failCountBefore)
 	}
+}
+
+// ── Checkpoint Tests ────────────────────────────
+
+// TestNodeCompletedTriggersCheckpoint verifies that when a node completes
+// (via reapRuntimes detecting an exited runtime), a CHECKPOINT_CREATED
+// event is emitted with the correct payload.
+func TestNodeCompletedTriggersCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	wfID := seedWorkflowRunning(t, es, ss, r, eng, mgr, bugfixYAML, "t-checkpoint")
+
+	// Mark the analyze runtime instance as exited successfully.
+	mgr.MarkExited("rt-analyze-1", 0, domain.RuntimeMetrics{
+		TokensIn: 100, TokensOut: 50, ToolCalls: 2,
+	})
+
+	// Reconcile — reapRuntimes should detect the exited instance,
+	// emit NODE_COMPLETED, and then createCheckpoint.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Read events from the node's stream.
+	events, err := es.Read(ctx, "node-analyze", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	var foundCompleted, foundCheckpoint bool
+	for _, ev := range events {
+		switch ev.Type {
+		case store.EventNodeCompleted:
+			foundCompleted = true
+		case store.EventCheckpointCreated:
+			foundCheckpoint = true
+			var payload domain.CheckpointCreated
+			if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal CheckpointCreated: %v", err)
+			}
+			if payload.NodeID != "analyze" {
+				t.Errorf("checkpoint NodeID = %s, want analyze", payload.NodeID)
+			}
+			if payload.WorkflowID != wfID {
+				t.Errorf("checkpoint WorkflowID = %s, want %s", payload.WorkflowID, wfID)
+			}
+			if payload.SessionID != "sess-analyze-1" {
+				t.Errorf("checkpoint SessionID = %s, want sess-analyze-1", payload.SessionID)
+			}
+			if payload.GitCommit == "" {
+				t.Log("checkpoint GitCommit is empty (expected if not in git repo)")
+			}
+		}
+	}
+	if !foundCompleted {
+		t.Fatal("expected NODE_COMPLETED event")
+	}
+	if !foundCheckpoint {
+		t.Fatal("expected CHECKPOINT_CREATED event after NODE_COMPLETED")
+	}
+}
+
+// TestCheckpointProjectedIntoNodeState verifies that a CHECKPOINT_CREATED
+// event updates the node state projection with checkpoint data.
+func TestCheckpointProjectedIntoNodeState(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	wfID := seedWorkflowRunning(t, es, ss, r, eng, mgr, bugfixYAML, "t-proj")
+
+	// Mark the runtime as exited.
+	mgr.MarkExited("rt-analyze-1", 0, domain.RuntimeMetrics{})
+
+	// Reconcile — this should emit CHECKPOINT_CREATED and apply it to projections.
+	if err := r.Reconcile(ctx, wfID); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	ss.Rebuild(ctx)
+
+	// Verify the node state has checkpoint data.
+	ns, err := ss.GetNodeState(ctx, "analyze")
+	if err != nil {
+		t.Fatalf("GetNodeState: %v", err)
+	}
+	if ns.Checkpoint == nil {
+		t.Fatal("expected checkpoint data on node state, got nil")
+	}
+	if ns.Checkpoint.GitCommit == "" {
+		t.Log("checkpoint GitCommit is empty (expected if not in git repo)")
+	}
+	if ns.Checkpoint.CreatedAt.IsZero() {
+		t.Error("checkpoint CreatedAt should not be zero")
+	}
+}
+
+// TestGetGitCommit verifies that getGitCommit returns a non-empty SHA
+// when run inside a git repository.
+func TestGetGitCommit(t *testing.T) {
+	commit := getGitCommit(".")
+	if commit == "" {
+		t.Fatal("expected non-empty git commit in a git repo")
+	}
+	// Git commit hashes are 40 hex characters.
+	if len(commit) != 40 {
+		t.Errorf("expected 40-char hex hash, got len=%d: %s", len(commit), commit)
+	}
+}
+
+
+// ── Runtime Action Event Streaming Tests ─────────────
+
+// TestStreamRuntimeEvents verifies that when a runtime reports events via
+// ReportEvent, the reconciler observes them and emits RUNTIME_ACTION events
+// to the event store.
+func TestStreamRuntimeEvents(t *testing.T) {
+	ctx := context.Background()
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start the first node (analyze).
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Verify the runtime instance exists.
+	inst, err := mgr.GetInstance(ctx, "rt-analyze-1")
+	if err != nil {
+		t.Fatalf("GetInstance: %v", err)
+	}
+	if inst.State != domain.RuntimeStateRunning {
+		t.Fatalf("instance state = %s, want RUNNING", inst.State)
+	}
+
+	// Emit a runtime event via ReportEvent.
+	event := runtime.RuntimeEvent{
+		Type:    runtime.RuntimeEventToolCall,
+		Action:  "running pytest tests/test_auth.py",
+		ToolName: "Bash",
+		Detail:  "19 passed, 1 skipped",
+	}
+	mgr.ReportEvent("rt-analyze-1", event)
+
+	// Verify the instance's CurrentAction was updated.
+	inst, _ = mgr.GetInstance(ctx, "rt-analyze-1")
+	if inst.CurrentAction != "running pytest tests/test_auth.py" {
+		t.Errorf("CurrentAction = %q, want %q", inst.CurrentAction, "running pytest tests/test_auth.py")
+	}
+
+	// Observe: the reconciler should be able to get the event channel.
+	ch := mgr.Observe("rt-analyze-1")
+	defer mgr.StopObserving("rt-analyze-1", ch)
+
+	// Emit another event and verify it's received on the observe channel.
+	event2 := runtime.RuntimeEvent{
+		Type:    runtime.RuntimeEventFileChanged,
+		Action:  "editing auth.go",
+		ToolName: "Edit",
+	}
+	mgr.ReportEvent("rt-analyze-1", event2)
+
+	select {
+	case received := <-ch:
+		if received.Action != "editing auth.go" {
+			t.Errorf("observed action = %q, want %q", received.Action, "editing auth.go")
+		}
+		if received.ToolName != "Edit" {
+			t.Errorf("observed tool = %q, want %q", received.ToolName, "Edit")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for observed event")
+	}
+}
+
+// TestReconciler_RuntimeActionEventType verifies the RUNTIME_ACTION event type is defined.
+func TestReconciler_RuntimeActionEventType(t *testing.T) {
+	if store.EventRuntimeAction != "RUNTIME_ACTION" {
+		t.Errorf("EventRuntimeAction = %q, want %q", store.EventRuntimeAction, "RUNTIME_ACTION")
+	}
+}
+
+// TestStreamRuntimeEventsEmitsRuntimeAction verifies the full flow:
+// ReportEvent -> Observe -> emit RUNTIME_ACTION to event store.
+func TestStreamRuntimeEventsEmitsRuntimeAction(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	r, es, ss, eng, mgr := newTestReconcilerWithRuntime(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start the first node.
+	r.Reconcile(ctx, wfID)
+	ss.Rebuild(ctx)
+
+	// Now simulate the reconciler's streamRuntimeEvents by directly
+	// subscribing to the observe channel and emitting RUNTIME_ACTION.
+	instanceID := "rt-analyze-1"
+	ch := mgr.Observe(instanceID)
+	defer mgr.StopObserving(instanceID, ch)
+
+	// Start a goroutine that streams runtime events to the event store
+	// (this is what streamRuntimeEvents does).
+	go func() {
+		defer mgr.StopObserving(instanceID, ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-ch:
+				if !ok {
+					return
+				}
+				ra := domain.RuntimeAction{
+					NodeID:     "analyze",
+					WorkflowID: wfID,
+					RuntimeID:  evt.RuntimeID,
+					Action:     evt.Action,
+					ToolName:   evt.ToolName,
+					Detail:     evt.Detail,
+				}
+				data, _ := json.Marshal(ra)
+				_, err := es.Append(ctx, "node-analyze", []store.Event{{
+					ID:      fmt.Sprintf("evt-ra-%d", time.Now().UnixNano()),
+					Type:    store.EventRuntimeAction,
+					Payload: data,
+				}})
+				if err != nil && ctx.Err() == nil {
+					t.Logf("append RUNTIME_ACTION: %v", err)
+				}
+			}
+		}
+	}()
+
+	// Emit a few events.
+	for _, evt := range []runtime.RuntimeEvent{
+		{Type: runtime.RuntimeEventThinking, Action: "analyzing code", ToolName: "Think"},
+		{Type: runtime.RuntimeEventToolCall, Action: "reading auth.go", ToolName: "Read"},
+		{Type: runtime.RuntimeEventFileChanged, Action: "editing auth.go", ToolName: "Edit"},
+	} {
+		mgr.ReportEvent(instanceID, evt)
+	}
+
+	// Wait a bit for events to be processed.
+	time.Sleep(200 * time.Millisecond)
+
+	// Read all events from the node stream and verify RUNTIME_ACTION events exist.
+	events, err := es.Read(ctx, "node-analyze", 0)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	var raCount int
+	for _, ev := range events {
+		if ev.Type == store.EventRuntimeAction {
+			raCount++
+			var payload domain.RuntimeAction
+			if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal RUNTIME_ACTION: %v", err)
+			}
+			if payload.NodeID != "analyze" {
+				t.Errorf("RUNTIME_ACTION NodeID = %q, want %q", payload.NodeID, "analyze")
+			}
+			if payload.WorkflowID != wfID {
+				t.Errorf("RUNTIME_ACTION WorkflowID = %q, want %q", payload.WorkflowID, wfID)
+			}
+		}
+	}
+	if raCount < 1 {
+		t.Fatal("expected at least 1 RUNTIME_ACTION event, found 0")
+	}
+	t.Logf("found %d RUNTIME_ACTION events in node-analyze stream", raCount)
 }

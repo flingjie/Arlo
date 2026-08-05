@@ -108,6 +108,12 @@ const (
 
 	// Annotations
 	EventNodeAnnotated EventType = "NODE_ANNOTATED"
+
+	// Checkpointing
+	EventCheckpointCreated EventType = "CHECKPOINT_CREATED"
+
+	// Runtime actions (real-time agent activity stream)
+	EventRuntimeAction EventType = "RUNTIME_ACTION"
 )
 
 // EventStore is the append-only, immutable event log.

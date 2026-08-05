@@ -295,3 +295,31 @@ type SessionCancelled struct {
 	WorkflowID string `json:"workflow_id"`
 	Reason     string `json:"reason"`
 }
+
+// ── Checkpoint Payload ───────────────────────────────
+
+// CheckpointCreated is the payload for CHECKPOINT_CREATED events.
+// Emitted when a node completes successfully, capturing enough state
+// to resume from this point if the workflow crashes mid-execution.
+type CheckpointCreated struct {
+	NodeID     string            `json:"node_id"`
+	WorkflowID string            `json:"workflow_id"`
+	SessionID  string            `json:"session_id"`
+	Artifacts  []string          `json:"artifacts,omitempty"`  // artifact IDs produced
+	GitCommit  string            `json:"git_commit,omitempty"` // HEAD commit at checkpoint
+	Output     map[string]string `json:"output,omitempty"`     // node output summary
+}
+
+// ── Runtime Action Payload ────────────────────────────
+
+// RuntimeAction is the payload for RUNTIME_ACTION events.
+// Emitted by the reconciler when it observes real-time agent activity
+// from a running runtime instance (THINKING, TOOL_CALL, etc.).
+type RuntimeAction struct {
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	RuntimeID  string `json:"runtime_id"`
+	Action     string `json:"action"`            // human-readable: "running pytest"
+	ToolName   string `json:"tool_name,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}

@@ -35,6 +35,10 @@ type Adapter interface {
 
 	// Status returns the current observable status of the runtime instance.
 	Status(ctx context.Context, id string) (domain.RuntimeStatus, error)
+
+	// Snapshot returns the current observable state of the runtime process.
+	// Used by the TUI inspector and GetRuntimeSnapshot RPC.
+	Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error)
 }
 
 // InteractiveRuntime is an optional interface for runtimes that expose a PTY stream.

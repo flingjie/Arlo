@@ -82,3 +82,19 @@ type PTYFrame struct {
 	Data      []byte `json:"data"`
 	Seq       int64  `json:"seq"`
 }
+
+// RuntimeSnapshot captures the current observable state of an agent runtime.
+// Used by the TUI inspector and GetRuntimeSnapshot RPC.
+type RuntimeSnapshot struct {
+	CurrentAction string       `json:"current_action"`
+	FilesChanged  []string     `json:"files_changed,omitempty"`
+	TokenUsage    TokenUsage   `json:"token_usage"`
+	LastMessage   string       `json:"last_message,omitempty"`
+	State         RuntimeState `json:"state"`
+}
+
+// TokenUsage tracks token in/out counts for a runtime snapshot.
+type TokenUsage struct {
+	In  int64 `json:"in"`
+	Out int64 `json:"out"`
+}

@@ -34,6 +34,7 @@ type NodeState struct {
 	Gate        string            `json:"gate,omitempty"`
 	Annotations []Annotation      `json:"annotations,omitempty"`
 	Metrics     NodeMetrics       `json:"metrics,omitempty"`
+	Checkpoint  *NodeCheckpoint   `json:"checkpoint,omitempty"`
 }
 
 // Annotation is a human or system annotation attached to a node execution.
@@ -51,6 +52,16 @@ type NodeMetrics struct {
 	ToolCalls  int     `json:"tool_calls"`
 	CostUSD    float64 `json:"cost_usd"`
 	DurationMs int64   `json:"duration_ms"`
+}
+
+// NodeCheckpoint captures the state at a node checkpoint for resume support.
+// When a node completes, a CHECKPOINT_CREATED event is emitted so that if
+// the workflow crashes mid-execution, it can resume from the last checkpoint.
+type NodeCheckpoint struct {
+	GitCommit string            `json:"git_commit,omitempty"`
+	Artifacts []string          `json:"artifacts,omitempty"`
+	Output    map[string]string `json:"output,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
 }
 
 // Decision represents an action the Reconciler should take.

@@ -580,3 +580,97 @@ func TestMetricsSnapshotProjection(t *testing.T) {
 		t.Errorf("DurationMs = %d, want 25000", ns.Metrics.DurationMs)
 	}
 }
+
+// TestCheckpointProjection verifies that a CHECKPOINT_CREATED event
+// properly projects checkpoint data onto the node state.
+func TestCheckpointProjection(t *testing.T) {
+	ss, es := newTestStateStore(t)
+	ctx := context.Background()
+
+	appendEvent(t, es, "workflow-w1", makeEvent("evt-1", store.EventWorkflowCreated, domain.WorkflowCreated{
+		WorkflowID: "w1", TaskID: "t1", GraphName: "test", Version: 1,
+	}))
+	appendEvent(t, es, "node-n1", makeEvent("evt-2", store.EventNodeCreated, domain.NodeCreated{
+		NodeID: "coder", WorkflowID: "w1", SkillName: "code", Runtime: "claude-code",
+	}))
+	ss.Rebuild(ctx)
+
+	// Emit a CHECKPOINT_CREATED event.
+	appendEvent(t, es, "node-n1", makeEvent("evt-3", store.EventCheckpointCreated, domain.CheckpointCreated{
+		NodeID:     "coder",
+		WorkflowID: "w1",
+		SessionID:  "sess-1",
+		Artifacts:  []string{"art-1", "art-2"},
+		GitCommit:  "abc123def456",
+		Output:     map[string]string{"rca.md": "art-1"},
+	}))
+	ss.Rebuild(ctx)
+
+	ns, _ := ss.GetNodeState(ctx, "coder")
+	if ns.Checkpoint == nil {
+		t.Fatal("expected checkpoint data on node state, got nil")
+	}
+	if ns.Checkpoint.GitCommit != "abc123def456" {
+		t.Errorf("checkpoint GitCommit = %s, want abc123def456", ns.Checkpoint.GitCommit)
+	}
+	if len(ns.Checkpoint.Artifacts) != 2 {
+		t.Errorf("checkpoint Artifacts len = %d, want 2", len(ns.Checkpoint.Artifacts))
+	}
+	if ns.Checkpoint.Artifacts[0] != "art-1" || ns.Checkpoint.Artifacts[1] != "art-2" {
+		t.Errorf("checkpoint Artifacts = %v, want [art-1 art-2]", ns.Checkpoint.Artifacts)
+	}
+	if v, ok := ns.Checkpoint.Output["rca.md"]; !ok || v != "art-1" {
+		t.Errorf("checkpoint Output[rca.md] = %s, want art-1", ns.Checkpoint.Output["rca.md"])
+	}
+	if ns.Checkpoint.CreatedAt.IsZero() {
+		t.Error("checkpoint CreatedAt should not be zero")
+	}
+}
+
+
+// TestApplyRuntimeAction verifies that RUNTIME_ACTION events are applied as a no-op
+// by the projection (the event store is the source of truth for the timeline).
+func TestApplyRuntimeAction(t *testing.T) {
+	ss, es := newTestStateStore(t)
+	ctx := context.Background()
+
+	// Set up a minimal workflow with a node so the projection has context.
+	appendEvent(t, es, "workflow-wf1", makeEvent("evt-1", store.EventTaskCreated, domain.TaskCreated{
+		TaskID: "task-1", Title: "test", CreatedBy: "tester", WorkflowID: "wf1",
+	}))
+	appendEvent(t, es, "node-analyze", makeEvent("evt-2", store.EventNodeCreated, domain.NodeCreated{
+		NodeID: "analyze", WorkflowID: "wf1", SkillName: "test-skill", Runtime: "claude-code",
+	}))
+
+	// Apply a RUNTIME_ACTION event.
+	ra := domain.RuntimeAction{
+		NodeID:     "analyze",
+		WorkflowID: "wf1",
+		RuntimeID:  "rt-analyze-1",
+		Action:     "running pytest",
+		ToolName:   "Bash",
+	}
+	evt := makeEvent("evt-ra-1", store.EventRuntimeAction, ra)
+	appendEvent(t, es, "node-analyze", evt)
+
+	// Rebuild -- should not error.
+	if err := ss.Rebuild(ctx); err != nil {
+		t.Fatalf("Rebuild with RUNTIME_ACTION: %v", err)
+	}
+
+	// Verify the workflow and node still exist (no state change from RUNTIME_ACTION).
+	wf, err := ss.GetWorkflow(ctx, "wf1")
+	if err != nil {
+		t.Fatalf("GetWorkflow: %v", err)
+	}
+	if wf.Status != domain.WorkflowStatusActive {
+		t.Errorf("workflow status should remain Active, got %s", wf.Status)
+	}
+	ns, err := ss.GetNodeState(ctx, "analyze")
+	if err != nil {
+		t.Fatalf("GetNodeState: %v", err)
+	}
+	if ns.Status != domain.NodeStatusPending {
+		t.Errorf("node status should remain Pending, got %s", ns.Status)
+	}
+}

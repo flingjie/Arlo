@@ -262,6 +262,26 @@ func (m *Manager) AttachInstance(ctx context.Context, id string) (<-chan domain.
 	return ir.Attach(ctx, id)
 }
 
+// Snapshot returns the current observable state of the runtime process
+// by delegating to the appropriate adapter.
+func (m *Manager) Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error) {
+	m.mu.RLock()
+	inst, ok := m.instances[id]
+	if !ok {
+		m.mu.RUnlock()
+		return domain.RuntimeSnapshot{}, fmt.Errorf("runtime instance not found: %s", id)
+	}
+
+	adapter, adapterOk := m.adapters[inst.Type]
+	m.mu.RUnlock()
+
+	if !adapterOk {
+		return domain.RuntimeSnapshot{}, fmt.Errorf("adapter not found for type: %s", inst.Type)
+	}
+
+	return adapter.Snapshot(ctx, id)
+}
+
 // RuntimeSpec contains all information needed to start a RuntimeInstance.
 type RuntimeSpec struct {
 	InstanceID  string

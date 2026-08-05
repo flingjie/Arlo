@@ -89,6 +89,8 @@ func extractNodeIDFromItem(item TimelineItem) string {
 		return it.NodeID
 	case ArtifactCreatedItem:
 		return it.NodeID
+	case RuntimeActionItem:
+		return it.NodeID
 	}
 	return ""
 }
@@ -418,7 +420,12 @@ func formatLogLine(item TimelineItem) string {
 		}
 		return fmt.Sprintf("artifact %s", name)
 	case NodeHeartbeatItem:
-		return "heartbeat"
+return "heartbeat"
+	case RuntimeActionItem:
+		if it.ToolName != "" {
+			return fmt.Sprintf("action   %s [%s]", it.Action, it.ToolName)
+		}
+		return fmt.Sprintf("action   %s", it.Action)
 	default:
 		return item.Render()
 	}

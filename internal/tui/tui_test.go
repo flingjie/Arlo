@@ -1534,3 +1534,105 @@ func stripAnsi(s string) string {
 	}
 	return result.String()
 }
+
+// ── RuntimeActionItem ─────────────────────────────
+
+func TestRuntimeActionItemInterface(t *testing.T) {
+	now := time.Now()
+	item := RuntimeActionItem{
+		Timestamp: now,
+		NodeID:    "analyze",
+		Action:    "running pytest",
+		ToolName:  "Bash",
+	}
+
+	if item.Time() != now {
+		t.Error("Time() mismatch")
+	}
+	if item.Level() != INFO {
+		t.Errorf("Level() = %v, want INFO", item.Level())
+	}
+	rendered := item.Render()
+	if !strings.Contains(rendered, "analyze") {
+		t.Errorf("Render() missing node ID: %s", rendered)
+	}
+	if !strings.Contains(rendered, "running pytest") {
+		t.Errorf("Render() missing action: %s", rendered)
+	}
+	if !strings.Contains(rendered, "Bash") {
+		t.Errorf("Render() missing tool name: %s", rendered)
+	}
+}
+
+func TestRuntimeActionItemRenderWithoutTool(t *testing.T) {
+	item := RuntimeActionItem{
+		Timestamp: time.Now(),
+		NodeID:    "implement",
+		Action:    "thinking about solution",
+	}
+
+	rendered := item.Render()
+	if !strings.Contains(rendered, "implement") {
+		t.Errorf("Render() missing node ID: %s", rendered)
+	}
+	if !strings.Contains(rendered, "thinking about solution") {
+		t.Errorf("Render() missing action: %s", rendered)
+	}
+}
+
+func TestRuntimeActionItemRenderCompact(t *testing.T) {
+	item := RuntimeActionItem{
+		Timestamp: time.Now(),
+		NodeID:    "very-long-node-id-12345",
+		Action:    "editing src/components/auth/login.go with new error handling",
+		ToolName:  "Edit",
+	}
+
+	rendered := item.Render()
+	// Should contain the key elements.
+	if !strings.Contains(rendered, "auth/login.go") {
+		t.Errorf("Render() should contain filename from action: %s", rendered)
+	}
+	if !strings.Contains(rendered, "Edit") {
+		t.Errorf("Render() missing tool: %s", rendered)
+	}
+}
+
+func TestEventToItemRuntimeAction(t *testing.T) {
+	payload, _ := json.Marshal(map[string]any{
+		"node_id":     "analyze",
+		"workflow_id": "wf-1",
+		"runtime_id":  "rt-analyze-1",
+		"action":      "running pytest",
+		"tool_name":   "Bash",
+		"detail":      "19 passed",
+	})
+	ev := &arlov1.Event{
+		Type:      "RUNTIME_ACTION",
+		StreamId:  "node-analyze",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Payload:   payload,
+	}
+	item := EventToItem(ev)
+	ra, ok := item.(RuntimeActionItem)
+	if !ok {
+		t.Fatalf("got %T, want RuntimeActionItem", item)
+	}
+	if ra.NodeID != "analyze" {
+		t.Errorf("NodeID = %q, want %q", ra.NodeID, "analyze")
+	}
+	if ra.Action != "running pytest" {
+		t.Errorf("Action = %q, want %q", ra.Action, "running pytest")
+	}
+	if ra.ToolName != "Bash" {
+		t.Errorf("ToolName = %q, want %q", ra.ToolName, "Bash")
+	}
+}
+
+func TestExtractNodeIDFromRuntimeActionItem(t *testing.T) {
+	item := RuntimeActionItem{NodeID: "n1"}
+	got := extractNodeIDFromItem(item)
+	if got != "n1" {
+		t.Errorf("extractNodeIDFromItem(RuntimeActionItem) = %q, want %q", got, "n1")
+	}
+}

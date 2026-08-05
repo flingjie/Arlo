@@ -29,6 +29,7 @@ type claudeInstance struct {
 	pty      *os.File // PTY master
 	stdout   *bytes.Buffer
 	stderr   *bytes.Buffer
+	exited   bool // set under mu write lock after cmd.Wait()
 }
 
 // NewClaudeAdapter creates a new Claude Code adapter.
@@ -161,6 +162,13 @@ func (a *ClaudeAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) 
 			}
 		}
 
+		// Mark the instance as exited under the lock.
+		a.mu.Lock()
+		if tracked, ok := a.instances[inst.ID]; ok {
+			tracked.exited = true
+		}
+		a.mu.Unlock()
+
 		// Notify the Manager so the reconciler can detect the exit.
 		if a.mgr != nil {
 			a.mgr.MarkExited(inst.ID, exitCode, domain.RuntimeMetrics{
@@ -253,4 +261,22 @@ func (a *ClaudeAdapter) Status(ctx context.Context, id string) (domain.RuntimeSt
 	}
 
 	return status, nil
+}
+
+// Snapshot returns the current observable state of the runtime process.
+func (a *ClaudeAdapter) Snapshot(ctx context.Context, id string) (domain.RuntimeSnapshot, error) {
+	a.mu.RLock()
+	ci, ok := a.instances[id]
+	if !ok {
+		a.mu.RUnlock()
+		return domain.RuntimeSnapshot{State: domain.RuntimeStateExited}, nil
+	}
+
+	state := domain.RuntimeStateRunning
+	if ci.exited {
+		state = domain.RuntimeStateExited
+	}
+	a.mu.RUnlock()
+
+	return domain.RuntimeSnapshot{State: state}, nil
 }

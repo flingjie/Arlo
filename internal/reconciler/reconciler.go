@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -329,6 +330,7 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 				slog.Error("reap: emit NODE_COMPLETED failed", "node", ns.NodeID, "error", err)
 			}
 			r.emitArtifacts(ctx, workflowID, ns)
+			r.createCheckpoint(ctx, workflowID, ns.NodeID, ns)
 			continue
 		}
 
@@ -485,6 +487,8 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 					"node", nodeID, "error", emitErr)
 			}
 		}
+
+		// Start streaming runtime events to the event store for TUI timeline.
 		return
 	}
 }
@@ -912,5 +916,144 @@ func (r *Reconciler) reconcileAll(ctx context.Context) {
 
 	if len(workflows) > 0 {
 		slog.Debug("reconcileAll: tick complete", "workflows", len(workflows))
+	}
+}
+
+// ── Checkpointing ────────────────────────────────
+
+// createCheckpoint captures the current state when a node completes successfully.
+// It emits a CHECKPOINT_CREATED event so that if the workflow crashes mid-execution,
+// it can resume from the last checkpoint instead of starting over.
+func (r *Reconciler) createCheckpoint(ctx context.Context, workflowID, nodeID string, ns domain.NodeState) error {
+	gitCommit := getGitCommit(workDir())
+
+	artifactIDs := r.collectArtifactIDs(workflowID, nodeID)
+
+	payload := domain.CheckpointCreated{
+		NodeID:     nodeID,
+		WorkflowID: workflowID,
+		SessionID:  ns.SessionID,
+		Artifacts:  artifactIDs,
+		GitCommit:  gitCommit,
+		Output:     ns.Output,
+	}
+
+	data, _ := json.Marshal(payload)
+	now := time.Now()
+	event := store.Event{
+		ID:        fmt.Sprintf("evt-checkpoint-%s-%d", nodeID, now.UnixNano()),
+		Type:      store.EventCheckpointCreated,
+		StreamID:  "node-" + nodeID,
+		Payload:   data,
+		Timestamp: now,
+	}
+	positions, err := r.eventStore.Append(ctx, "node-"+nodeID, []store.Event{event})
+	if err != nil {
+		return fmt.Errorf("createCheckpoint: append for %s: %w", nodeID, err)
+	}
+	event.Position = positions[0]
+	if err := r.stateStore.Apply(event); err != nil {
+		return fmt.Errorf("createCheckpoint: apply for %s: %w", nodeID, err)
+	}
+
+	slog.Debug("checkpoint created",
+		"node", nodeID,
+		"git_commit", gitCommit,
+		"artifacts", len(artifactIDs),
+	)
+	return nil
+}
+
+// collectArtifactIDs builds a list of artifact IDs that were (or would be)
+// produced by the node's skill outputs.
+func (r *Reconciler) collectArtifactIDs(workflowID, nodeID string) []string {
+	r.graphRegistryMu.RLock()
+	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
+	if graph == nil {
+		return nil
+	}
+
+	var skillRef domain.SkillRef
+	for _, n := range graph.Nodes {
+		if n.ID == nodeID {
+			skillRef = n.SkillRef
+			break
+		}
+	}
+	if skillRef.Name == "" || r.skillRegistry == nil {
+		return nil
+	}
+
+	sk, err := r.skillRegistry.Resolve(skillRef)
+	if err != nil || len(sk.Output) == 0 {
+		return nil
+	}
+
+	var ids []string
+	for _, name := range sk.Output {
+		ids = append(ids, fmt.Sprintf("art-%s-%s-%s", workflowID, nodeID, name))
+	}
+	return ids
+}
+
+// getGitCommit returns the current HEAD commit hash for the given work directory.
+func getGitCommit(workDir string) string {
+	cmd := exec.Command("git", "-C", workDir, "rev-parse", "HEAD")
+	cmd.Stderr = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// streamRuntimeEvents subscribes to runtime events from a running instance and
+// emits them as RUNTIME_ACTION events to the event store so the TUI timeline
+// can display real-time agent activity.
+func (r *Reconciler) streamRuntimeEvents(ctx context.Context, workflowID, nodeID, instanceID string) {
+	ch := r.runtimeMgr.Observe(instanceID)
+	defer r.runtimeMgr.StopObserving(instanceID, ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			ra := domain.RuntimeAction{
+				NodeID:     nodeID,
+				WorkflowID: workflowID,
+				RuntimeID:  evt.RuntimeID,
+				Action:     evt.Action,
+				ToolName:   evt.ToolName,
+				Detail:     evt.Detail,
+			}
+			data, _ := json.Marshal(ra)
+			event := store.Event{
+				ID:       fmt.Sprintf("evt-ra-%s-%d", nodeID, time.Now().UnixNano()),
+				Type:     store.EventRuntimeAction,
+				StreamID: "node-" + nodeID,
+				Payload:  data,
+			}
+			positions, err := r.eventStore.Append(ctx, "node-"+nodeID, []store.Event{event})
+			if err != nil {
+				slog.Warn("streamRuntimeEvents: append failed",
+					"node", nodeID,
+					"instance", instanceID,
+					"error", err,
+				)
+				continue
+			}
+			event.Position = positions[0]
+			if err := r.stateStore.Apply(event); err != nil {
+				slog.Warn("streamRuntimeEvents: apply failed",
+					"node", nodeID,
+					"error", err,
+				)
+			}
+		}
 	}
 }

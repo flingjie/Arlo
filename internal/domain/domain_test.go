@@ -573,3 +573,74 @@ func TestMarshalAllNewEventPayloads(t *testing.T) {
 		}
 	}
 }
+
+// TestRuntimeActionPayload verifies JSON round-trip for the RuntimeAction payload.
+func TestRuntimeActionPayload(t *testing.T) {
+	payload := RuntimeAction{
+		NodeID:     "analyze",
+		WorkflowID: "wf-1",
+		RuntimeID:  "rt-analyze-1",
+		Action:     "running pytest",
+		ToolName:   "Bash",
+		Detail:     "running: pytest tests/test_auth.py -v",
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded RuntimeAction
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if decoded.NodeID != payload.NodeID {
+		t.Errorf("NodeID = %q, want %q", decoded.NodeID, payload.NodeID)
+	}
+	if decoded.WorkflowID != payload.WorkflowID {
+		t.Errorf("WorkflowID = %q, want %q", decoded.WorkflowID, payload.WorkflowID)
+	}
+	if decoded.RuntimeID != payload.RuntimeID {
+		t.Errorf("RuntimeID = %q, want %q", decoded.RuntimeID, payload.RuntimeID)
+	}
+	if decoded.Action != payload.Action {
+		t.Errorf("Action = %q, want %q", decoded.Action, payload.Action)
+	}
+	if decoded.ToolName != payload.ToolName {
+		t.Errorf("ToolName = %q, want %q", decoded.ToolName, payload.ToolName)
+	}
+	if decoded.Detail != payload.Detail {
+		t.Errorf("Detail = %q, want %q", decoded.Detail, payload.Detail)
+	}
+}
+
+// TestRuntimeActionOptionalFields verifies that omitempty fields are handled correctly.
+func TestRuntimeActionOptionalFields(t *testing.T) {
+	payload := RuntimeAction{
+		NodeID:     "analyze",
+		WorkflowID: "wf-1",
+		RuntimeID:  "rt-analyze-1",
+		Action:     "editing auth.go",
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded RuntimeAction
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if decoded.Action != "editing auth.go" {
+		t.Errorf("Action = %q, want %q", decoded.Action, "editing auth.go")
+	}
+	if decoded.ToolName != "" {
+		t.Errorf("ToolName should be empty, got %q", decoded.ToolName)
+	}
+	if decoded.Detail != "" {
+		t.Errorf("Detail should be empty, got %q", decoded.Detail)
+	}
+}

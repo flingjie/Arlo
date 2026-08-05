@@ -339,6 +339,14 @@ func (p *workflowProjection) Apply(event store.Event) error {
 	case store.EventNodeAnnotated:
 		return p.applyNodeAnnotated(event)
 
+	// ── Checkpointing ────────────────────────────
+	case store.EventCheckpointCreated:
+		return p.applyCheckpointCreated(event)
+
+	// ── Real-time runtime activity ───────────────
+	case store.EventRuntimeAction:
+		return p.applyRuntimeAction(event)
+
 	default:
 		// Unknown event types are silently ignored — projections are
 		// additive and don't need to know every event type.
@@ -615,3 +623,52 @@ func (p *workflowProjection) applyNodeAnnotated(event store.Event) error {
 	wf.Nodes[payload.NodeID] = *ns
 	return nil
 }
+
+	// ── Checkpoint applicators ──────────────────────
+
+	func (p *workflowProjection) applyCheckpointCreated(event store.Event) error {
+		var payload domain.CheckpointCreated
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("unmarshal CheckpointCreated: %w", err)
+		}
+
+		wf, ns, err := p.lookupNode(payload.NodeID, payload.WorkflowID)
+		if err != nil {
+			return fmt.Errorf("CheckpointCreated: %w", err)
+		}
+
+		artifacts := payload.Artifacts
+		if artifacts == nil {
+			artifacts = []string{}
+		}
+		output := payload.Output
+		if output == nil {
+			output = map[string]string{}
+		}
+
+		ns.Checkpoint = &domain.NodeCheckpoint{
+			GitCommit: payload.GitCommit,
+			Artifacts: artifacts,
+			Output:    output,
+			CreatedAt: event.Timestamp,
+		}
+		wf.Nodes[payload.NodeID] = *ns
+		return nil
+	}
+
+	// ── Runtime action applicator ─────────────────────
+
+	func (p *workflowProjection) applyRuntimeAction(event store.Event) error {
+		// RUNTIME_ACTION events are no-ops for the state projection.
+		// The TUI timeline reads these events directly from the event store,
+		// so no state mutation is needed here.
+		// We still verify that the node exists.
+		var payload domain.RuntimeAction
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("unmarshal RuntimeAction: %w", err)
+		}
+		if _, _, err := p.lookupNode(payload.NodeID, payload.WorkflowID); err != nil {
+			return fmt.Errorf("RuntimeAction: %w", err)
+		}
+		return nil
+	}

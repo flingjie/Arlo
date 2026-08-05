@@ -158,3 +158,50 @@ func TestClaudeAdapterStartDetachedContext(t *testing.T) {
 		t.Error("instance still tracked after Destroy")
 	}
 }
+
+// TestClaudeAdapterSnapshotNonexistent verifies Snapshot returns Exited state
+// for an unknown ID.
+func TestClaudeAdapterSnapshotNonexistent(t *testing.T) {
+	adapter := NewClaudeAdapter()
+	snap, err := adapter.Snapshot(context.Background(), "nonexistent")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.State != domain.RuntimeStateExited {
+		t.Errorf("expected Exited state for nonexistent instance, got %s", snap.State)
+	}
+}
+
+// TestClaudeAdapterSnapshotExisting verifies Snapshot returns Running state
+// for a running instance when claude is available.
+func TestClaudeAdapterSnapshotExisting(t *testing.T) {
+	_, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude not found in PATH — skipping integration test")
+	}
+
+	adapter := NewClaudeAdapter()
+
+	inst := domain.RuntimeInstance{
+		ID:     "test-claude-snapshot",
+		Type:   domain.RuntimeProviderClaudeCode,
+		Prompt: "say hello",
+	}
+
+	if err := adapter.Start(context.Background(), inst); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		adapter.Stop(context.Background(), inst.ID)
+		time.Sleep(200 * time.Millisecond)
+		adapter.Destroy(context.Background(), inst.ID)
+	}()
+
+	snap, err := adapter.Snapshot(context.Background(), inst.ID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snap.State != domain.RuntimeStateRunning {
+		t.Errorf("State = %s, want RUNNING", snap.State)
+	}
+}

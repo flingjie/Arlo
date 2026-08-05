@@ -246,6 +246,25 @@ func (i ArtifactCreatedItem) Render() string {
 
 // ── Generic fallback ──────────────────────────────
 
+// ── Runtime Action items ────────────────────────────
+
+type RuntimeActionItem struct {
+	Timestamp time.Time
+	NodeID    string
+	Action    string // human-readable: "running pytest", "editing auth.go"
+	ToolName  string
+	Detail    string
+}
+
+func (i RuntimeActionItem) Time() time.Time { return i.Timestamp }
+func (i RuntimeActionItem) Level() Level    { return INFO }
+func (i RuntimeActionItem) Render() string {
+	if i.ToolName != "" {
+		return fmt.Sprintf("%s: %s [%s]", i.NodeID, i.Action, i.ToolName)
+	}
+	return fmt.Sprintf("%s: %s", i.NodeID, i.Action)
+}
+
 type GenericEventItem struct {
 	Timestamp time.Time
 	EventType string
@@ -306,7 +325,10 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: ti, TokensOut: to, ToolCalls: tc, DurationMs: dur}
 	case "ARTIFACT_CREATED":
 		artID, artName, artPath := extractArtifact(event)
-		return ArtifactCreatedItem{Timestamp: t, NodeID: nodeID, ArtifactID: artID, Name: artName, Path: artPath}
+return ArtifactCreatedItem{Timestamp: t, NodeID: nodeID, ArtifactID: artID, Name: artName, Path: artPath}
+	case "RUNTIME_ACTION":
+		ra := extractRuntimeAction(event)
+		return RuntimeActionItem{Timestamp: t, NodeID: nodeID, Action: ra.Action, ToolName: ra.ToolName, Detail: ra.Detail}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
@@ -362,6 +384,17 @@ func extractMetrics(event *arlov1.Event) (tokensIn, tokensOut int64, toolCalls i
 	}
 	_ = json.Unmarshal(event.Payload, &payload)
 	return payload.TokensIn, payload.TokensOut, payload.ToolCalls, payload.DurationMs
+}
+
+func extractRuntimeAction(event *arlov1.Event) RuntimeActionItem {
+	var payload struct {
+		NodeID    string `json:"node_id"`
+		Action    string `json:"action"`
+		ToolName  string `json:"tool_name"`
+		Detail    string `json:"detail"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	return RuntimeActionItem{NodeID: payload.NodeID, Action: payload.Action, ToolName: payload.ToolName, Detail: payload.Detail}
 }
 
 func extractArtifact(event *arlov1.Event) (artifactID, name, path string) {
