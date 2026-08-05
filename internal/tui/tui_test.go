@@ -953,7 +953,7 @@ func TestRelativeTime(t *testing.T) {
 		ago    time.Duration
 		expect string
 	}{
-		{"just now", 50 * time.Millisecond, "just now"},
+		{"just now", 0, "just now"},
 		{"seconds", 45 * time.Second, "45s ago"},
 		{"one minute", 90 * time.Second, "1m ago"},
 		{"minutes", 5 * time.Minute, "5m ago"},

@@ -238,7 +238,7 @@ func (p *InspectorPanel) View(width, height int) string {
 	case TabSummary:
 		p.renderSummary(&sb, innerW)
 	case TabLogs:
-		p.renderLogs(&sb)
+		p.renderLogs(&sb, height)
 	case TabPrompt:
 		p.renderPrompt(&sb, innerW)
 	case TabArtifacts:
@@ -312,7 +312,7 @@ func (p *InspectorPanel) renderSummary(sb *strings.Builder, width int) {
 
 // ── Logs Tab ──────────────────────────────────────
 
-func (p *InspectorPanel) renderLogs(sb *strings.Builder) {
+func (p *InspectorPanel) renderLogs(sb *strings.Builder, height int) {
 	n := p.node
 	events := p.nodeEvents[n.NodeId]
 
@@ -325,13 +325,37 @@ func (p *InspectorPanel) renderLogs(sb *strings.Builder) {
 		return
 	}
 
-	// Causal order (oldest → newest). Skip heartbeats — they drown signal.
-	var shown, skippedHB int
+	// Filter to non-heartbeat events, most-recent-first (auto-scroll).
+	var filtered []TimelineItem
+	var skippedHB int
 	for _, item := range events {
 		if _, ok := item.(NodeHeartbeatItem); ok {
 			skippedHB++
 			continue
 		}
+		filtered = append(filtered, item)
+	}
+
+	if len(filtered) == 0 {
+		sb.WriteString(GrayStyle.Render("  No diagnostic events yet (heartbeats hidden).\n"))
+		return
+	}
+
+	// Estimate available lines: height minus ~6 header/tab lines, minus context lines.
+	// Context takes ~4-6 lines; leave 2 for footer.
+	maxLines := height - 10
+	if maxLines < 1 {
+		maxLines = 1
+	}
+
+	// Show most recent events that fit.
+	start := 0
+	if len(filtered) > maxLines {
+		start = len(filtered) - maxLines
+		sb.WriteString(GrayStyle.Render(fmt.Sprintf("  · %d earlier events (auto-scroll)\n", start)))
+	}
+	var shown int
+	for _, item := range filtered[start:] {
 		timeStr := item.Time().Local().Format("15:04:05.000")
 		levelColor := lipgloss.NewStyle().Foreground(lipgloss.Color(item.Level().Color()))
 		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
@@ -342,9 +366,7 @@ func (p *InspectorPanel) renderLogs(sb *strings.Builder) {
 		shown++
 	}
 
-	if shown == 0 {
-		sb.WriteString(GrayStyle.Render("  No diagnostic events yet (heartbeats hidden).\n"))
-	} else if skippedHB > 0 {
+	if skippedHB > 0 {
 		sb.WriteString(GrayStyle.Render(fmt.Sprintf("  · %d heartbeat(s) hidden\n", skippedHB)))
 	}
 }
@@ -428,9 +450,13 @@ func formatLogLine(item TimelineItem) string {
 return "heartbeat"
 	case RuntimeActionItem:
 		if it.ToolName != "" {
-			return fmt.Sprintf("action   %s [%s]", it.Action, it.ToolName)
+			detail := ""
+			if it.Detail != "" {
+				detail = " → " + func(s string) string { if len(s) > 80 { return s[:80] + "..." }; return s }(it.Detail)
+			}
+			return fmt.Sprintf("%-12s %s [%s]%s", "agent", it.Action, it.ToolName, detail)
 		}
-		return fmt.Sprintf("action   %s", it.Action)
+		return fmt.Sprintf("%-12s %s", "agent", it.Action)
 	default:
 		return item.Render()
 	}

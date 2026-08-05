@@ -193,13 +193,20 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 				if event.ToolName != "" {
 					cum.toolCalls++
 
-					// Emit real-time RuntimeEvent for tool calls.
+					// Emit real-time RuntimeEvent for tool calls with rich detail.
 					if a.mgr != nil {
+						action := "executing tool"
+						detail := ""
+						if event.ToolResult != "" {
+							detail = truncate(event.ToolResult, 200)
+							action = "tool completed"
+						}
 						a.mgr.ReportEvent(inst.ID, RuntimeEvent{
 							Type:      RuntimeEventToolCall,
 							RuntimeID: inst.ID,
-							Action:    event.ToolName,
-							ToolName:  event.ToolName,
+							Action:    action,
+							ToolName:  "pi-tool",
+							Detail:    detail,
 							Timestamp: time.Now(),
 						})
 					}

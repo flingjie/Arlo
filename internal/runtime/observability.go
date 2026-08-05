@@ -226,6 +226,13 @@ func (e *StreamEvent) parsePiMessageEnd(raw json.RawMessage) {
 		// Pi's tool execution creates message_start/message_end with role="toolResult".
 		if msg.Role == "toolResult" {
 			e.ToolName = "agent-tool"
+				// Extract tool output text for richer log detail.
+				for _, c := range msg.Content {
+					if c.Type == "text" && c.Text != "" {
+						e.ToolResult = c.Text
+						break
+					}
+				}
 		}
 		return
 	}
