@@ -14,8 +14,8 @@ nodes:
   - id: explore
     skill: explore-structure
     runtime:
-      provider: claude-code
-      model: claude-sonnet-4
+      provider: pi
+      model: deepseek-v4-pro
     retry:
       max_retries: 1
       backoff: 10s
@@ -23,8 +23,8 @@ nodes:
   - id: identify
     skill: identify-patterns
     runtime:
-      provider: claude-code
-      model: claude-opus-4
+      provider: pi
+      model: deepseek-v4-pro
     depends_on:
       - explore
     retry:
@@ -34,8 +34,8 @@ nodes:
   - id: review
     skill: architecture-review
     runtime:
-      provider: claude-code
-      model: claude-sonnet-4
+      provider: pi
+      model: deepseek-v4-pro
     depends_on:
       - identify
     gate: human_approval
