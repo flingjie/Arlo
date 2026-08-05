@@ -620,6 +620,11 @@ func (p *workflowProjection) applyNodeAnnotated(event store.Event) error {
 		Value:     payload.Value,
 		Timestamp: event.Timestamp,
 	})
+	// Special annotation: runtime_id sets NodeState.RuntimeId so the
+	// TUI inspector can locate the runtime log file.
+	if payload.Key == "runtime_id" {
+		ns.RuntimeID = payload.Value
+	}
 	wf.Nodes[payload.NodeID] = *ns
 	return nil
 }

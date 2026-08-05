@@ -305,6 +305,9 @@ func (p *InspectorPanel) renderSummary(sb *strings.Builder, width int) {
 	sectionHeader(sb, "Session", width)
 	kvLine(sb, "session", emptyDash(n.SessionId, ""), WhiteStyle)
 	kvLine(sb, "runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
+	if n.RuntimeId != "" {
+		kvLine(sb, "log", fmt.Sprintf("~/.arlo/runtime/%s.log", n.RuntimeId), GrayStyle)
+	}
 }
 
 // ── Logs Tab ──────────────────────────────────────
@@ -363,6 +366,8 @@ func (p *InspectorPanel) renderLogsContext(sb *strings.Builder, n *arlov1.NodeSt
 	}
 	if n.RuntimeId != "" {
 		kvLine(sb, "runtime", n.RuntimeId, WhiteStyle)
+		logPath := fmt.Sprintf("~/.arlo/runtime/%s.log", n.RuntimeId)
+		kvLine(sb, "log", logPath, GrayStyle)
 	}
 
 	// Surface last failure reason and last metrics from the event buffer.
@@ -610,6 +615,9 @@ func (p *InspectorPanel) renderPrompt(sb *strings.Builder, width int) {
 	sectionHeader(sb, "Agent Configuration", width)
 	kvLine(sb, "skill", emptyDash(skill, ""), WhiteStyle)
 	kvLine(sb, "runtime", emptyDash(n.RuntimeId, ""), WhiteStyle)
+	if n.RuntimeId != "" {
+		kvLine(sb, "log", fmt.Sprintf("~/.arlo/runtime/%s.log", n.RuntimeId), GrayStyle)
+	}
 
 	sb.WriteString("\n")
 	sectionHeader(sb, "Prompt Context", width)

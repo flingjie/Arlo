@@ -486,6 +486,18 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 				slog.Warn("launchRuntime: emit runtime.launch annotation failed",
 					"node", nodeID, "error", emitErr)
 			}
+
+			// Also emit runtime_id so the inspector can find the log file.
+			if emitErr := r.emitNodeEvent(ctx, workflowID, *ns, store.EventNodeAnnotated,
+				domain.NodeAnnotated{
+					NodeID:     ns.NodeID,
+					WorkflowID: workflowID,
+					Key:        "runtime_id",
+					Value:      instanceID,
+				}); emitErr != nil {
+				slog.Warn("launchRuntime: emit runtime_id annotation failed",
+					"node", nodeID, "error", emitErr)
+			}
 		}
 
 		// Start streaming runtime events to the event store for TUI timeline.
