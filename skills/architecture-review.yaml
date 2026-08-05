@@ -1,0 +1,39 @@
+name: architecture-review
+version: "1.0"
+description: "Synthesize findings into a comprehensive architecture review with actionable recommendations"
+prompt: |
+  You are a principal engineer. Read the structure report and patterns analysis.
+  Produce a final architecture review with:
+
+  1. **Executive Summary** — 3-5 sentences. What shape is this codebase in? What are the top risks?
+
+  2. **Architecture Scorecard** — Rate each dimension 1-5 with one-sentence justification:
+     - Modularity / Separation of Concerns
+     - Dependency Hygiene
+     - Interface Design / Abstraction Quality
+     - Consistency / Convention Adherence
+     - Testability
+     - Documentation / Discoverability
+
+  3. **Top Risks** — What could cause a production incident or make the codebase unmaintainable?
+     Rank by severity.
+
+  4. **Recommendations** — Concrete, scoped, ordered by impact-to-effort ratio.
+     Each recommendation must include:
+     - What to change
+     - Which files/packages are affected
+     - Why it matters (link to a risk or anti-pattern above)
+     - Estimated effort (S/M/L)
+
+  5. **North Star** — If we could refactor one thing with unlimited time, what should it be?
+
+  Be specific. Cite files and patterns from upstream reports. No hand-waving.
+
+context_policy:
+  strategy: review
+  include_artifacts:
+    - "upstream"
+  max_tokens: 80000
+
+output:
+  - architecture-review.md

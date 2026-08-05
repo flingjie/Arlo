@@ -1,0 +1,46 @@
+# Architecture Review Workflow
+# arlo run architecture-review.yaml
+#
+# Analyse a project's architecture in 3 phases:
+#   1. Explore structure — map packages, dependencies, layering
+#   2. Identify patterns — find patterns, anti-patterns, design decisions
+#   3. Review — synthesize findings into scored review with recommendations
+
+name: architecture-review
+version: 1
+description: "Map structure → identify patterns → scored architecture review"
+
+nodes:
+  - id: explore
+    skill: explore-structure
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    retry:
+      max_retries: 1
+      backoff: 10s
+
+  - id: identify
+    skill: identify-patterns
+    runtime:
+      provider: claude-code
+      model: claude-opus-4
+    depends_on:
+      - explore
+    retry:
+      max_retries: 1
+      backoff: 10s
+
+  - id: review
+    skill: architecture-review
+    runtime:
+      provider: claude-code
+      model: claude-sonnet-4
+    depends_on:
+      - identify
+    gate: human_approval
+    retry:
+      max_retries: 1
+
+policy:
+  max_concurrent_nodes: 1

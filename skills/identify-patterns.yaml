@@ -1,0 +1,32 @@
+name: identify-patterns
+version: "1.0"
+description: "Identify architectural patterns, design decisions, and anti-patterns in the codebase"
+prompt: |
+  You are a software architect. Based on the structure report, identify:
+
+  1. **Architectural Patterns** — What patterns are intentionally or unintentionally used?
+     (e.g., hexagonal, layered, CQRS, event sourcing, microservices, monolith, plugin system)
+
+  2. **Design Decisions** — What choices has the team made? Are they documented? Are they consistent?
+     (e.g., interface conventions, error handling strategy, DI approach, config management)
+
+  3. **Anti-Patterns** — What smells or problems exist?
+     (e.g., God objects, leaky abstractions, import cycles, missing interfaces, tight coupling)
+
+  4. **Consistency Audit** — Do conventions hold across packages? Where do they break?
+
+  For each finding, cite specific files and line ranges. Be precise.
+
+context_policy:
+  strategy: analysis
+  include_artifacts:
+    - "upstream"
+  include_files:
+    - "**/*.go"
+    - "**/*.ts"
+    - "**/*.py"
+    - "**/*.rs"
+  max_tokens: 120000
+
+output:
+  - patterns-report.md

@@ -1,0 +1,35 @@
+name: explore-structure
+version: "1.0"
+description: "Map a project's package/module structure, dependency graph, and layering"
+prompt: |
+  You are a software architect. Your job is to map the project's structure.
+  Do NOT suggest changes yet — just produce an accurate structural map.
+
+  Steps:
+  1. Identify top-level packages/modules and their declared purposes
+  2. Trace the dependency graph (who imports whom)
+  3. Map the layering: which packages are high-level, which are low-level
+  4. Identify external dependencies and their roles
+  5. Note any circular dependencies or layering violations
+
+  Output a structure report with:
+  - Package tree with one-line purpose per package
+  - Dependency direction diagram (text-based)
+  - Layering assessment (clean layers? violations?)
+  - External dependency inventory
+
+context_policy:
+  strategy: analysis
+  include_files:
+    - "**/*.go"
+    - "**/*.ts"
+    - "**/*.py"
+    - "**/*.rs"
+    - "**/go.mod"
+    - "**/package.json"
+    - "**/Cargo.toml"
+    - "**/Makefile"
+  max_tokens: 100000
+
+output:
+  - structure-report.md
