@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -239,6 +240,7 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 				}); err != nil {
 				slog.Error("reap: emit NODE_COMPLETED failed", "node", ns.NodeID, "error", err)
 			}
+			r.emitArtifacts(ctx, workflowID, ns)
 			continue
 		}
 
@@ -729,6 +731,59 @@ func workDir() string {
 		return d
 	}
 	return "/tmp"
+}
+
+// emitArtifacts discovers output files from a node's skill and emits
+// ARTIFACT_CREATED events so the TUI can display them.
+func (r *Reconciler) emitArtifacts(ctx context.Context, workflowID string, ns domain.NodeState) {
+	graph := r.graphRegistry[workflowID]
+	if graph == nil {
+		return
+	}
+
+	// Find the node in the graph to get its skill reference.
+	var skillRef domain.SkillRef
+	for _, n := range graph.Nodes {
+		if n.ID == ns.NodeID {
+			skillRef = n.SkillRef
+			break
+		}
+	}
+	if skillRef.Name == "" {
+		return
+	}
+
+	if r.skillRegistry == nil {
+		return
+	}
+	sk, err := r.skillRegistry.Resolve(skillRef)
+	if err != nil || len(sk.Output) == 0 {
+		return
+	}
+
+	wd := workDir()
+	for _, name := range sk.Output {
+		path := filepath.Join(wd, name)
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			slog.Debug("emitArtifacts: stat failed", "path", path, "error", statErr)
+			continue
+		}
+
+		artID := fmt.Sprintf("art-%s-%s-%s", workflowID, ns.NodeID, name)
+		payload := domain.ArtifactCreated{
+			ArtifactID: artID,
+			NodeID:     ns.NodeID,
+			SessionID:  ns.SessionID,
+			Name:       name,
+			Size:       info.Size(),
+			Path:       path,
+		}
+		if err := r.emitNodeEvent(ctx, workflowID, ns, store.EventArtifactCreated, payload); err != nil {
+			slog.Warn("emitArtifacts: emit ARTIFACT_CREATED failed",
+				"node", ns.NodeID, "name", name, "error", err)
+		}
+	}
 }
 
 // ── Internal: reconcile all ─────────────────────

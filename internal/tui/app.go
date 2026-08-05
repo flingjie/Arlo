@@ -177,6 +177,10 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ui.HelpOpen = false
 			return m, nil
 		}
+		if m.inspectorPanel.artifactContent != nil {
+			m.inspectorPanel.HandleArtifactKey(msg.String())
+			return m, nil
+		}
 		if m.ui.InspectorOverlay {
 			m.ui.InspectorOverlay = false
 			return m, nil
@@ -192,16 +196,28 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleFocus()
 
 	case "up", "k":
+		if m.ui.Focus == FocusInspector && m.inspectorPanel.tab == TabArtifacts {
+			m.inspectorPanel.HandleArtifactKey(msg.String())
+			return m, nil
+		}
 		m.navigatePanel(msg)
 		m.syncInspectorToSelection()
 		return m, nil
 
 	case "down", "j":
+		if m.ui.Focus == FocusInspector && m.inspectorPanel.tab == TabArtifacts {
+			m.inspectorPanel.HandleArtifactKey(msg.String())
+			return m, nil
+		}
 		m.navigatePanel(msg)
 		m.syncInspectorToSelection()
 		return m, nil
 
 	case "enter":
+		if m.ui.Focus == FocusInspector && m.inspectorPanel.tab == TabArtifacts {
+			m.inspectorPanel.HandleArtifactKey(msg.String())
+			return m, nil
+		}
 		m.syncInspectorToSelection()
 
 	case ":":

@@ -822,8 +822,8 @@ func TestInspectorPanelArtifactsTabWithArtifacts(t *testing.T) {
 	if !strings.Contains(view, "plan.md") {
 		t.Error("should show artifact name")
 	}
-	if !strings.Contains(view, "art-abc123") {
-		t.Error("should show artifact ID")
+	if !strings.Contains(view, "file(s)") {
+		t.Error("should show artifact count header")
 	}
 }
 
@@ -1140,8 +1140,8 @@ func TestStatusIconAllStatuses(t *testing.T) {
 }
 
 func TestSelectionCursor(t *testing.T) {
-	if !strings.Contains(SelectionCursor(true), "▶") {
-		t.Fatal("selected cursor should be ▶")
+	if !strings.Contains(SelectionCursor(true), "▸") {
+		t.Fatal("selected cursor should be ▸")
 	}
 	if stripAnsi(SelectionCursor(false)) != " " {
 		t.Fatal("unselected cursor should be a space")
@@ -1167,8 +1167,8 @@ func TestWorkflowPanelGlyphsAndBlocked(t *testing.T) {
 	if !strings.Contains(view, "■") || !strings.Contains(view, "BLOCKED") {
 		t.Fatalf("expected BLOCKED ■:\n%s", view)
 	}
-	if !strings.Contains(view, "▶") {
-		t.Fatalf("expected selection cursor ▶:\n%s", view)
+	if !strings.Contains(view, "▸") {
+		t.Fatalf("expected selection cursor ▸:\n%s", view)
 	}
 	if strings.Contains(view, "⏸") {
 		t.Fatal("old WAITING glyph still present")

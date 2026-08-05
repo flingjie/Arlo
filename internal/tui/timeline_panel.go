@@ -241,10 +241,7 @@ func (p *TimelinePanel) View(width, height int) string {
 			if !(p.expand && i == p.cursor) {
 				msg = truncateRunes(msg, msgWidth)
 			}
-			prefix := "  "
-			if i == p.cursor && p.focused {
-				prefix = CyanStyle.Render("▶ ")
-			}
+			prefix := SelectionCursor(i == p.cursor && p.focused) + " "
 			sb.WriteString(fmt.Sprintf("%s%s  %s  %s\n",
 				prefix,
 				GrayStyle.Render(timeStr),

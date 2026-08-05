@@ -211,15 +211,16 @@ type ArtifactCreatedItem struct {
 	NodeID     string
 	ArtifactID string
 	Name       string
+	Path       string
 }
 
 func (i ArtifactCreatedItem) Time() time.Time { return i.Timestamp }
 func (i ArtifactCreatedItem) Level() Level    { return INFO }
 func (i ArtifactCreatedItem) Render() string {
 	if i.Name != "" {
-		return fmt.Sprintf("%s artifact created: %s (%s)", i.NodeID, i.Name, truncateID(i.ArtifactID))
+		return fmt.Sprintf("%s artifact: %s (%s)", i.NodeID, i.Name, truncateID(i.ArtifactID))
 	}
-	return fmt.Sprintf("%s artifact created: %s", i.NodeID, truncateID(i.ArtifactID))
+	return fmt.Sprintf("%s artifact: %s", i.NodeID, truncateID(i.ArtifactID))
 }
 
 // ── Generic fallback ──────────────────────────────
@@ -283,8 +284,8 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 		ti, to, tc, dur := extractMetrics(event)
 		return MetricsSnapshotItem{Timestamp: t, NodeID: nodeID, TokensIn: ti, TokensOut: to, ToolCalls: tc, DurationMs: dur}
 	case "ARTIFACT_CREATED":
-		artID, artName := extractArtifact(event)
-		return ArtifactCreatedItem{Timestamp: t, NodeID: nodeID, ArtifactID: artID, Name: artName}
+		artID, artName, artPath := extractArtifact(event)
+		return ArtifactCreatedItem{Timestamp: t, NodeID: nodeID, ArtifactID: artID, Name: artName, Path: artPath}
 	default:
 		return GenericEventItem{Timestamp: t, EventType: event.Type}
 	}
@@ -342,13 +343,14 @@ func extractMetrics(event *arlov1.Event) (tokensIn, tokensOut int64, toolCalls i
 	return payload.TokensIn, payload.TokensOut, payload.ToolCalls, payload.DurationMs
 }
 
-func extractArtifact(event *arlov1.Event) (artifactID, name string) {
+func extractArtifact(event *arlov1.Event) (artifactID, name, path string) {
 	var payload struct {
 		ArtifactID string `json:"artifact_id"`
 		Name       string `json:"name"`
+		Path       string `json:"path"`
 	}
 	_ = json.Unmarshal(event.Payload, &payload)
-	return payload.ArtifactID, payload.Name
+	return payload.ArtifactID, payload.Name, payload.Path
 }
 
 func truncateID(id string) string {

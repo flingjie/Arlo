@@ -67,9 +67,11 @@ func PanelChrome(focused bool) lipgloss.Style {
 }
 
 // SelectionCursor returns the row prefix for the selected node (not a status glyph).
+// Uses ▸ (narrow) rather than ▶ (ambiguous): on CJK terminals ▶ often renders
+// double-width while the unselected placeholder is a single space, shifting icons.
 func SelectionCursor(selected bool) string {
 	if selected {
-		return CyanStyle.Render("▶")
+		return CyanStyle.Render("▸")
 	}
 	return " "
 }

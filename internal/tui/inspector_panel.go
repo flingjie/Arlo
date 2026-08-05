@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +23,12 @@ type InspectorPanel struct {
 
 	// Latest metrics snapshot per node (for the Metrics tab).
 	latestMetrics map[string]MetricsSnapshotItem
+
+	// Artifact content viewing state.
+	artifactCursor      int      // selected artifact index in the list
+	artifactContent     []string // lines of the opened artifact file
+	artifactContentScroll int    // scroll offset for content view
+	artifactContentPath string  // path of the currently viewed artifact
 
 	// Dispatcher is retained for command Dispatch helpers; Model owns Subscribe.
 	dispatcher *Dispatcher
@@ -87,6 +95,13 @@ func extractNodeIDFromItem(item TimelineItem) string {
 
 // SetNode sets the node to inspect.
 func (p *InspectorPanel) SetNode(n *arlov1.NodeState) {
+	// Reset artifact view state when switching nodes.
+	if p.node == nil || p.node.NodeId != n.NodeId {
+		p.artifactCursor = 0
+		p.artifactContent = nil
+		p.artifactContentScroll = 0
+		p.artifactContentPath = ""
+	}
 	p.node = n
 }
 
@@ -102,6 +117,94 @@ func (p *InspectorPanel) SetTab(t InspectorTab) {
 
 // SetFocus sets keyboard focus.
 func (p *InspectorPanel) SetFocus(focused bool) { p.focused = focused }
+
+// HandleArtifactKey processes key events when the Artifacts tab is active.
+// Returns true if the key was consumed (the Model should not process it further).
+func (p *InspectorPanel) HandleArtifactKey(key string) bool {
+	// If viewing artifact content.
+	if p.artifactContent != nil {
+		switch key {
+		case "esc":
+			p.artifactContent = nil
+			p.artifactContentScroll = 0
+			p.artifactContentPath = ""
+			return true
+		case "up", "k":
+			if p.artifactContentScroll > 0 {
+				p.artifactContentScroll--
+			}
+			return true
+		case "down", "j":
+			if p.artifactContentScroll < len(p.artifactContent)-1 {
+				p.artifactContentScroll++
+			}
+			return true
+		}
+		return false
+	}
+
+	// Browsing artifact list — count total artifacts for the current node.
+	if p.node == nil {
+		return false
+	}
+	events := p.nodeEvents[p.node.NodeId]
+	var artifacts []ArtifactCreatedItem
+	for _, e := range events {
+		if a, ok := e.(ArtifactCreatedItem); ok {
+			artifacts = append(artifacts, a)
+		}
+	}
+	if len(artifacts) == 0 {
+		return false
+	}
+
+	switch key {
+	case "up", "k":
+		if p.artifactCursor > 0 {
+			p.artifactCursor--
+		}
+		return true
+	case "down", "j":
+		if p.artifactCursor < len(artifacts)-1 {
+			p.artifactCursor++
+		}
+		return true
+	case "enter":
+		a := artifacts[p.artifactCursor]
+		p.openArtifact(a)
+		return true
+	}
+	return false
+}
+
+// openArtifact reads an artifact file and stores its content for display.
+func (p *InspectorPanel) openArtifact(item ArtifactCreatedItem) {
+	if item.Path == "" {
+		return
+	}
+	f, err := os.Open(item.Path)
+	if err != nil {
+		p.artifactContent = []string{fmt.Sprintf("(cannot open: %v)", err)}
+		p.artifactContentScroll = 0
+		p.artifactContentPath = item.Path
+		return
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		lines = append(lines, fmt.Sprintf("(read error: %v)", err))
+	}
+
+	p.artifactContent = lines
+	p.artifactContentScroll = 0
+	p.artifactContentPath = item.Path
+}
 
 // View renders the inspector.
 func (p *InspectorPanel) View(width, height int) string {
@@ -403,19 +506,84 @@ func (p *InspectorPanel) renderArtifacts(sb *strings.Builder) {
 		}
 	}
 
-	if len(artifacts) == 0 {
-		sb.WriteString(GrayStyle.Render("  No artifacts yet.\n"))
-		sb.WriteString(GrayStyle.Render("  Created when a node finishes with output files.\n"))
-		sb.WriteString(GrayStyle.Render("  Try: arlo artifacts <task-id>\n"))
+	// Content view — the user pressed Enter on an artifact file.
+	if p.artifactContent != nil {
+		p.renderArtifactContent(sb, artifacts)
 		return
 	}
 
-	for _, a := range artifacts {
+	if len(artifacts) == 0 {
+		sb.WriteString(GrayStyle.Render("  No artifacts yet.\n"))
+		sb.WriteString(GrayStyle.Render("  Output files appear when a node completes.\n"))
+		sb.WriteString(GrayStyle.Render("  ──\n"))
+		sb.WriteString(GrayStyle.Render("  ↑ ↓  navigate    Enter  open file    Esc  back\n"))
+		return
+	}
+
+	// Clamp cursor bounds.
+	if p.artifactCursor < 0 {
+		p.artifactCursor = 0
+	}
+	if p.artifactCursor >= len(artifacts) {
+		p.artifactCursor = len(artifacts) - 1
+	}
+
+	sb.WriteString(GrayStyle.Render(fmt.Sprintf("  %d file(s)  ──  Enter to open", len(artifacts))))
+	sb.WriteString("\n\n")
+
+	for i, a := range artifacts {
+		cursor := "  "
+		if i == p.artifactCursor {
+			cursor = CyanStyle.Render("▸ ")
+		}
 		timeStr := a.Timestamp.Local().Format("15:04:05")
+		name := WhiteStyle.Render(a.Name)
+		if a.Path != "" {
+			name = name + "  " + GrayStyle.Render(a.Path)
+		}
+		sb.WriteString(fmt.Sprintf("%s%s  %s\n",
+			cursor, GrayStyle.Render(timeStr), name))
+	}
+}
+
+// renderArtifactContent renders the content of a selected artifact file.
+func (p *InspectorPanel) renderArtifactContent(sb *strings.Builder, artifacts []ArtifactCreatedItem) {
+	title := artifacts[p.artifactCursor].Name
+	header := fmt.Sprintf("  %s  %s  %s  ↑↓ scroll  Esc back",
+		WhiteStyle.Bold(true).Render(title),
+		GrayStyle.Render(p.artifactContentPath),
+		GrayStyle.Render(fmt.Sprintf("(%d lines)", len(p.artifactContent))),
+	)
+	sb.WriteString(header)
+	sb.WriteString("\n")
+	sb.WriteString(GrayStyle.Render("  " + strings.Repeat("─", 60)))
+	sb.WriteString("\n")
+
+	// Show a window of lines around the scroll position.
+	// Use a reasonable visible window (20 lines).
+	visibleLines := 20
+	start := p.artifactContentScroll
+	end := start + visibleLines
+	if end > len(p.artifactContent) {
+		end = len(p.artifactContent)
+	}
+
+	for i := start; i < end; i++ {
+		lineNum := fmt.Sprintf("%4d", i+1)
+		content := p.artifactContent[i]
+		// Truncate long lines for display.
+		if len(content) > 100 {
+			content = content[:100] + "..."
+		}
 		sb.WriteString(fmt.Sprintf("  %s  %s\n",
-			GrayStyle.Render(timeStr),
-			WhiteStyle.Render(fmt.Sprintf("%s  →  %s", a.Name, a.ArtifactID)),
+			GrayStyle.Render(lineNum),
+			content,
 		))
+	}
+
+	if end < len(p.artifactContent) {
+		sb.WriteString(GrayStyle.Render(fmt.Sprintf("  ... %d more lines (↓ to scroll)", len(p.artifactContent)-end)))
+		sb.WriteString("\n")
 	}
 }
 

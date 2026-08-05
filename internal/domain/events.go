@@ -153,6 +153,7 @@ type ArtifactCreated struct {
 	Type        string `json:"type"`
 	Size        int64  `json:"size"`
 	ContentHash string `json:"content_hash"`
+	Path        string `json:"path"`
 }
 
 // ── Observability Payloads ───────────────────────
