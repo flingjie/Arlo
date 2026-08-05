@@ -201,25 +201,16 @@ func (s *ArloService) GetWorkflowSnapshot(ctx context.Context, req *arlov1.GetWo
 
 // GetSession returns session details.
 func (s *ArloService) GetSession(ctx context.Context, req *arlov1.GetSessionRequest) (*arlov1.GetSessionResponse, error) {
-	// In v0.1, sessions are tracked via node state.
-	// Walk all workflows to find the session.
-	workflows, err := s.stateStore.ListActiveWorkflows(ctx)
+	ns, err := s.stateStore.GetNodeStateBySession(ctx, req.SessionId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list workflows: %v", err)
+		return nil, status.Errorf(codes.NotFound, "session not found: %s", req.SessionId)
 	}
-	for _, wf := range workflows {
-		for _, ns := range wf.Nodes {
-			if ns.SessionID == req.SessionId {
-				return &arlov1.GetSessionResponse{
-					SessionId:  ns.SessionID,
-					NodeId:     ns.NodeID,
-					WorkflowId: wf.ID,
-					Status:     string(ns.Status),
-				}, nil
-			}
-		}
-	}
-	return nil, status.Errorf(codes.NotFound, "session not found: %s", req.SessionId)
+	return &arlov1.GetSessionResponse{
+		SessionId:  ns.SessionID,
+		NodeId:     ns.NodeID,
+		WorkflowId: ns.WorkflowID,
+		Status:     string(ns.Status),
+	}, nil
 }
 
 // ListSessions lists sessions for a workflow.
@@ -292,7 +283,14 @@ func (s *ArloService) SubscribeEvents(req *arlov1.SubscribeEventsRequest, stream
 func (s *ArloService) AttachPTY(req *arlov1.AttachPTYRequest, stream grpc.ServerStreamingServer[arlov1.PTYFrame]) error {
 	ctx := stream.Context()
 
-	frames, _, err := s.runtimeMgr.AttachInstance(ctx, req.SessionId)
+	// Translate session ID (sess-*) to runtime instance ID (rt-*).
+	// AttachInstance operates on runtime instances; the CLI sends a session ID.
+	instanceID := req.SessionId
+	if strings.HasPrefix(instanceID, "sess-") {
+		instanceID = "rt-" + strings.TrimPrefix(instanceID, "sess-")
+	}
+
+	frames, _, err := s.runtimeMgr.AttachInstance(ctx, instanceID)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "attach PTY: %v", err)
 	}
@@ -318,7 +316,12 @@ func (s *ArloService) AttachPTY(req *arlov1.AttachPTYRequest, stream grpc.Server
 
 // SendPTYInput sends input to a PTY session.
 func (s *ArloService) SendPTYInput(ctx context.Context, req *arlov1.SendPTYInputRequest) (*arlov1.SendPTYInputResponse, error) {
-	_, w, err := s.runtimeMgr.AttachInstance(ctx, req.SessionId)
+	// Translate session ID to runtime instance ID.
+	instanceID := req.SessionId
+	if strings.HasPrefix(instanceID, "sess-") {
+		instanceID = "rt-" + strings.TrimPrefix(instanceID, "sess-")
+	}
+	_, w, err := s.runtimeMgr.AttachInstance(ctx, instanceID)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "attach PTY: %v", err)
 	}
@@ -339,8 +342,9 @@ func (s *ArloService) ExecuteCommand(ctx context.Context, req *arlov1.CommandReq
 		_, err := s.eventStore.Append(ctx, "workflow-"+wfID, []store.Event{{
 			ID:   fmt.Sprintf("evt-cancel-%d", time.Now().UnixNano()),
 			Type: store.EventTaskCancelled,
-			Payload: marshalJSON(domain.TaskCompleted{
+			Payload: marshalJSON(domain.TaskCancelled{
 				TaskID: wfID,
+				Reason: "cancelled by user",
 			}),
 		}})
 		if err != nil {

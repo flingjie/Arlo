@@ -152,3 +152,48 @@ func TestDestroyWorkspace(t *testing.T) {
 		t.Error("provider should have cleaned up workspace")
 	}
 }
+
+// TestDestroyWorkspaceOnlyRemovesOwnSlots verifies that destroying one workspace
+// does not delete slots belonging to other workspaces.
+func TestDestroyWorkspaceOnlyRemovesOwnSlots(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	prov := newMockProvider()
+	mgr.RegisterProvider("mock", prov)
+
+	// Create two workspaces, each with one slot.
+	mgr.Create(ctx, domain.WorkspaceSpec{Name: "wsA", Type: "mock"})
+	mgr.Create(ctx, domain.WorkspaceSpec{Name: "wsB", Type: "mock"})
+	mgr.CreateSlot(ctx, "wsA", domain.SlotSpec{Name: "slotA"})
+	mgr.CreateSlot(ctx, "wsB", domain.SlotSpec{Name: "slotB"})
+
+	// Destroy workspace A.
+	err := mgr.Destroy(ctx, "wsA")
+	if err != nil {
+		t.Fatalf("Destroy wsA: %v", err)
+	}
+
+	// wsA's slot should be gone.
+	_, err = mgr.GetSlot(ctx, "wsA:slotA")
+	if err == nil {
+		t.Error("wsA:slotA should have been removed when wsA was destroyed")
+	}
+
+	// wsB's slot should still exist.
+	slotB, err := mgr.GetSlot(ctx, "wsB:slotB")
+	if err != nil {
+		t.Fatalf("wsB:slotB should NOT have been removed: %v", err)
+	}
+	if slotB.Name != "slotB" {
+		t.Errorf("slotB name = %s, want slotB", slotB.Name)
+	}
+
+	// wsB workspace should still exist.
+	wsB, err := mgr.GetWorkspace(ctx, "wsB")
+	if err != nil {
+		t.Fatalf("wsB workspace should still exist: %v", err)
+	}
+	if wsB.Name != "wsB" {
+		t.Errorf("wsB name = %s, want wsB", wsB.Name)
+	}
+}

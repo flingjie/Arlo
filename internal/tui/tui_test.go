@@ -1198,14 +1198,117 @@ func TestStatusIconAllStatuses(t *testing.T) {
 	}
 }
 
-func TestSelectionCursor(t *testing.T) {
-	if !strings.Contains(SelectionCursor(true), "▸") {
-		t.Fatal("selected cursor should be ▸")
+func TestWorkflowPanelFollowsActiveStep(t *testing.T) {
+	d := NewDispatcher()
+	p := NewWorkflowPanel(d)
+	p.SetFocus(true)
+
+	// Linear tree: explore → identify → review
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1",
+		Status:     "ACTIVE",
+		Version:    1,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "explore", Status: "RUNNING", Children: []string{"identify"}},
+			{NodeId: "identify", Status: "WAITING", DependsOn: []string{"explore"}, Children: []string{"review"}},
+			{NodeId: "review", Status: "WAITING", DependsOn: []string{"identify"}},
+		},
+	})
+	if got := p.GetSelectedNode(); got != "explore" {
+		t.Fatalf("RUNNING step: selected=%q want explore", got)
 	}
-	if stripAnsi(SelectionCursor(false)) != " " {
-		t.Fatal("unselected cursor should be a space")
+
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1",
+		Status:     "ACTIVE",
+		Version:    2,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "explore", Status: "COMPLETED", Children: []string{"identify"}},
+			{NodeId: "identify", Status: "RUNNING", DependsOn: []string{"explore"}, Children: []string{"review"}},
+			{NodeId: "review", Status: "WAITING", DependsOn: []string{"identify"}},
+		},
+	})
+	if got := p.GetSelectedNode(); got != "identify" {
+		t.Fatalf("after advance: selected=%q want identify", got)
+	}
+
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		WorkflowID: "wf-1",
+		Status:     "ACTIVE",
+		Version:    3,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "explore", Status: "COMPLETED", Children: []string{"identify"}},
+			{NodeId: "identify", Status: "COMPLETED", DependsOn: []string{"explore"}, Children: []string{"review"}},
+			{NodeId: "review", Status: "WAITING", DependsOn: []string{"identify"}, Gate: "human_approval"},
+		},
+	})
+	if got := p.GetSelectedNode(); got != "review" {
+		t.Fatalf("blocked step: selected=%q want review", got)
+	}
+	view := stripAnsi(p.View(50, 20))
+	// Cursor should sit on review, not explore.
+	lines := strings.Split(view, "\n")
+	var reviewLine, exploreLine string
+	for _, line := range lines {
+		if strings.Contains(line, "review") && strings.Contains(line, "BLOCKED") {
+			reviewLine = line
+		}
+		if strings.Contains(line, "explore") && strings.Contains(line, "COMPLETED") {
+			exploreLine = line
+		}
+	}
+	if !strings.Contains(reviewLine, "▸") {
+		t.Fatalf("cursor should be on review:\n%s", view)
+	}
+	if strings.Contains(exploreLine, "▸") {
+		t.Fatalf("cursor should leave explore:\n%s", view)
 	}
 }
+
+func TestWorkflowPanelFollowPausesOnManualNav(t *testing.T) {
+	d := NewDispatcher()
+	p := NewWorkflowPanel(d)
+	p.SetFocus(true)
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		Version: 1,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "explore", Status: "COMPLETED", Children: []string{"identify"}},
+			{NodeId: "identify", Status: "RUNNING", DependsOn: []string{"explore"}},
+		},
+	})
+	if got := p.GetSelectedNode(); got != "identify" {
+		t.Fatalf("selected=%q want identify", got)
+	}
+
+	_, _ = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if got := p.GetSelectedNode(); got != "explore" {
+		t.Fatalf("after k: selected=%q want explore", got)
+	}
+	if p.Follow {
+		t.Fatal("manual nav should pause follow")
+	}
+
+	_, _ = p.Update(WorkflowUpdatedEvent{
+		Version: 2,
+		Nodes: []*arlov1.NodeState{
+			{NodeId: "explore", Status: "COMPLETED", Children: []string{"identify"}},
+			{NodeId: "identify", Status: "COMPLETED", DependsOn: []string{"explore"}},
+		},
+	})
+	if got := p.GetSelectedNode(); got != "explore" {
+		t.Fatalf("paused follow should keep selection: got %q", got)
+	}
+
+	p.ResumeFollow()
+	if got := p.GetSelectedNode(); got != "explore" {
+		// both completed — first/lowest priority wins among equals; both pri 5, first is explore
+		t.Fatalf("resume follow selected=%q", got)
+	}
+	if !p.Follow {
+		t.Fatal("ResumeFollow should re-enable follow")
+	}
+}
+
 
 func TestWorkflowPanelGlyphsAndBlocked(t *testing.T) {
 	d := NewDispatcher()

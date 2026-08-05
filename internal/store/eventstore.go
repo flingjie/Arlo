@@ -8,7 +8,14 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
+)
+
+// Sentinel errors for store operations.
+var (
+	// ErrDuplicateEventID is returned when an event with the same ID already exists.
+	ErrDuplicateEventID = errors.New("duplicate event ID")
 )
 
 // Event is the universal envelope for all domain events in arlod.
@@ -55,22 +62,33 @@ const (
 	EventTaskFailed    EventType = "TASK_FAILED"
 	EventTaskCancelled EventType = "TASK_CANCELLED"
 
-	// Workflow
-	EventWorkflowCreated EventType = "WORKFLOW_CREATED"
-	EventWorkflowChanged EventType = "WORKFLOW_CHANGED"
+	// Workflow lifecycle
+	EventWorkflowCreated   EventType = "WORKFLOW_CREATED"
+	EventWorkflowChanged   EventType = "WORKFLOW_CHANGED"
+	EventWorkflowCompleted EventType = "WORKFLOW_COMPLETED"
+	EventWorkflowFailed    EventType = "WORKFLOW_FAILED"
+	EventWorkflowCancelled EventType = "WORKFLOW_CANCELLED"
 
 	// Node lifecycle
 	EventNodeCreated   EventType = "NODE_CREATED"
 	EventNodeStarted   EventType = "NODE_STARTED"
 	EventNodeCompleted EventType = "NODE_COMPLETED"
 	EventNodeFailed    EventType = "NODE_FAILED"
-	EventNodeWaiting   EventType = "NODE_WAITING"
+	// TODO(v0.2): Rename to EventNodeEnteredWaiting = "NODE_ENTERED_WAITING"
+	EventNodeWaiting EventType = "NODE_WAITING"
 
 	// Runtime lifecycle
 	EventRuntimeCreated EventType = "RUNTIME_CREATED"
 	EventRuntimeStarted EventType = "RUNTIME_STARTED"
 	EventRuntimeExited  EventType = "RUNTIME_EXITED"
 	EventRuntimeLost    EventType = "RUNTIME_LOST"
+	EventRuntimeFailed  EventType = "RUNTIME_FAILED"
+
+	// Session lifecycle
+	EventSessionCreated   EventType = "SESSION_CREATED"
+	EventSessionCompleted EventType = "SESSION_COMPLETED"
+	EventSessionFailed    EventType = "SESSION_FAILED"
+	EventSessionCancelled EventType = "SESSION_CANCELLED"
 
 	// Workspace
 	EventWorkspaceCreated EventType = "WORKSPACE_CREATED"
@@ -80,6 +98,7 @@ const (
 	EventArtifactCreated EventType = "ARTIFACT_CREATED"
 
 	// Human-in-loop
+	// TODO(v0.2): Rename to EventHumanApprovalRequested = "HUMAN_APPROVAL_REQUESTED"
 	EventHumanApprovalRequired EventType = "HUMAN_APPROVAL_REQUIRED"
 	EventHumanInputReceived    EventType = "HUMAN_INPUT_RECEIVED"
 

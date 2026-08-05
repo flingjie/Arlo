@@ -47,6 +47,10 @@ type StateStore interface {
 	// GetNodeState returns the current state of a single node.
 	GetNodeState(ctx context.Context, nodeID string) (*domain.NodeState, error)
 
+	// GetNodeStateBySession returns the node state for a given session ID.
+	// Uses a session index for O(1) lookup instead of scanning all workflows.
+	GetNodeStateBySession(ctx context.Context, sessionID string) (*domain.NodeState, error)
+
 	// GetReadyNodes returns all nodes in READY state for a given workflow.
 	GetReadyNodes(ctx context.Context, workflowID string) ([]domain.NodeState, error)
 

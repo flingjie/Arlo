@@ -32,6 +32,12 @@ type TaskFailed struct {
 	Reason string `json:"reason"`
 }
 
+// TaskCancelled is the payload for TASK_CANCELLED events.
+type TaskCancelled struct {
+	TaskID string `json:"task_id"`
+	Reason string `json:"reason"`
+}
+
 // ── Workflow Payloads ─────────────────────────────
 
 // WorkflowCreated is the payload for WORKFLOW_CREATED events.
@@ -48,6 +54,23 @@ type WorkflowChanged struct {
 	WorkflowID string `json:"workflow_id"`
 	OldVersion int    `json:"old_version"`
 	NewVersion int    `json:"new_version"`
+	Reason     string `json:"reason"`
+}
+
+// WorkflowCompleted is the payload for WORKFLOW_COMPLETED events.
+type WorkflowCompleted struct {
+	WorkflowID string `json:"workflow_id"`
+}
+
+// WorkflowFailed is the payload for WORKFLOW_FAILED events.
+type WorkflowFailed struct {
+	WorkflowID string `json:"workflow_id"`
+	Reason     string `json:"reason"`
+}
+
+// WorkflowCancelled is the payload for WORKFLOW_CANCELLED events.
+type WorkflowCancelled struct {
+	WorkflowID string `json:"workflow_id"`
 	Reason     string `json:"reason"`
 }
 
@@ -68,10 +91,14 @@ type NodeStarted struct {
 	NodeID     string `json:"node_id"`
 	WorkflowID string `json:"workflow_id"`
 	SessionID  string `json:"session_id"`
+	RuntimeID  string `json:"runtime_id,omitempty"`
 }
 
 // NodeWaiting is the payload for NODE_WAITING events.
 // Emitted when a node is blocked on human approval.
+//
+// TODO(v0.2): Rename to NODE_ENTERED_WAITING (past-tense convention).
+//   Event type constant should become EventNodeEnteredWaiting = "NODE_ENTERED_WAITING".
 type NodeWaiting struct {
 	NodeID     string `json:"node_id"`
 	WorkflowID string `json:"workflow_id"`
@@ -134,6 +161,14 @@ type RuntimeLost struct {
 	Reason    string `json:"reason"`
 }
 
+// RuntimeFailed is the payload for RUNTIME_FAILED events.
+// Emitted when a runtime exits with an error or is terminated abnormally.
+type RuntimeFailed struct {
+	RuntimeID string `json:"runtime_id"`
+	SessionID string `json:"session_id"`
+	Reason    string `json:"reason"`
+}
+
 // ── Workspace Payloads ────────────────────────────
 
 // WorkspaceCreated is the payload for WORKSPACE_CREATED events.
@@ -186,6 +221,9 @@ type MetricsSnapshot struct {
 	ToolCalls  int     `json:"tool_calls"`
 	CostUSD    float64 `json:"cost_usd"`
 	DurationMs int64   `json:"duration_ms"`
+	FileEdits  int     `json:"file_edits,omitempty"`
+	Retries    int     `json:"retries,omitempty"`
+	HumanAsks  int     `json:"human_asks,omitempty"`
 }
 
 // NodeAnnotated is the payload for NODE_ANNOTATED events.
@@ -200,6 +238,9 @@ type NodeAnnotated struct {
 // ── Human Interaction Payloads ────────────────────
 
 // HumanApprovalRequired is the payload for HUMAN_APPROVAL_REQUIRED events.
+//
+// TODO(v0.2): Rename to HUMAN_APPROVAL_REQUESTED (past-tense convention).
+//   Event type constant should become EventHumanApprovalRequested = "HUMAN_APPROVAL_REQUESTED".
 type HumanApprovalRequired struct {
 	NodeID    string `json:"node_id"`
 	SessionID string `json:"session_id"`
@@ -215,4 +256,42 @@ type HumanInputReceived struct {
 	SessionID  string `json:"session_id"`
 	Decision   string `json:"decision"` // "approved", "rejected", "custom"
 	Input      string `json:"input,omitempty"`
+}
+
+// ── Session Payloads ───────────────────────────────
+
+// SessionCreated is the payload for SESSION_CREATED events.
+// Emitted when a new execution session (attempt) is created for a node.
+type SessionCreated struct {
+	SessionID  string `json:"session_id"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	TaskID     string `json:"task_id"`
+	Attempt    int    `json:"attempt"`
+}
+
+// SessionCompleted is the payload for SESSION_COMPLETED events.
+// Emitted when a session finishes successfully.
+type SessionCompleted struct {
+	SessionID  string `json:"session_id"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+}
+
+// SessionFailed is the payload for SESSION_FAILED events.
+// Emitted when a session terminates with an error.
+type SessionFailed struct {
+	SessionID  string `json:"session_id"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	Reason     string `json:"reason"`
+}
+
+// SessionCancelled is the payload for SESSION_CANCELLED events.
+// Emitted when a session is cancelled before completion.
+type SessionCancelled struct {
+	SessionID  string `json:"session_id"`
+	NodeID     string `json:"node_id"`
+	WorkflowID string `json:"workflow_id"`
+	Reason     string `json:"reason"`
 }

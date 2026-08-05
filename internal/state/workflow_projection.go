@@ -22,6 +22,7 @@ type InMemoryStateStore struct {
 	projections  map[string]Projection
 	workflows    map[string]*domain.WorkflowState // workflowID → state
 	nodeIndex    map[string]string                // nodeID → workflowID (reverse lookup)
+	sessionIndex map[string]string                // sessionID → nodeID (for O(1) lookups)
 
 	// lastRebuiltPos tracks the last global position that was rebuilt.
 	// Rebuild() uses this to only replay new events, avoiding O(n²) behavior.
@@ -31,10 +32,11 @@ type InMemoryStateStore struct {
 // NewInMemoryStateStore creates a new state store backed by the given Event Store.
 func NewInMemoryStateStore(eventStore store.EventStore) *InMemoryStateStore {
 	ss := &InMemoryStateStore{
-		eventStore:  eventStore,
-		projections: make(map[string]Projection),
-		workflows:   make(map[string]*domain.WorkflowState),
-		nodeIndex:   make(map[string]string),
+		eventStore:   eventStore,
+		projections:  make(map[string]Projection),
+		workflows:    make(map[string]*domain.WorkflowState),
+		nodeIndex:    make(map[string]string),
+		sessionIndex: make(map[string]string),
 	}
 
 	// Register built-in projections.
@@ -96,6 +98,30 @@ func (ss *InMemoryStateStore) GetNodeState(ctx context.Context, nodeID string) (
 	ns, ok := wf.Nodes[nodeID]
 	if !ok {
 		return nil, &NotFoundError{Entity: "node", ID: nodeID}
+	}
+	return &ns, nil
+}
+
+// GetNodeStateBySession returns the node associated with a session ID.
+func (ss *InMemoryStateStore) GetNodeStateBySession(ctx context.Context, sessionID string) (*domain.NodeState, error) {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+
+	nodeID, ok := ss.sessionIndex[sessionID]
+	if !ok {
+		return nil, &NotFoundError{Entity: "session", ID: sessionID}
+	}
+	wfID, ok := ss.nodeIndex[nodeID]
+	if !ok {
+		return nil, &NotFoundError{Entity: "session", ID: sessionID}
+	}
+	wf, ok := ss.workflows[wfID]
+	if !ok {
+		return nil, &NotFoundError{Entity: "session", ID: sessionID}
+	}
+	ns, ok := wf.Nodes[nodeID]
+	if !ok {
+		return nil, &NotFoundError{Entity: "session", ID: sessionID}
 	}
 	return &ns, nil
 }
@@ -324,6 +350,7 @@ func (p *workflowProjection) Reset() {
 	// Reset is called while the store's write lock is held in Rebuild.
 	p.store.workflows = make(map[string]*domain.WorkflowState)
 	p.store.nodeIndex = make(map[string]string)
+	p.store.sessionIndex = make(map[string]string)
 }
 
 // ── Event applicators ─────────────────────────────
@@ -405,6 +432,9 @@ func (p *workflowProjection) applyNodeStarted(event store.Event) error {
 	}
 	ns.Status = domain.NodeStatusRunning
 	ns.SessionID = payload.SessionID
+	if payload.SessionID != "" {
+		p.store.sessionIndex[payload.SessionID] = payload.NodeID
+	}
 	now := time.Now()
 	ns.StartedAt = &now
 	wf.Nodes[payload.NodeID] = *ns

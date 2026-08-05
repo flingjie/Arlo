@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/tui"
@@ -197,8 +198,13 @@ func artifacts(args []string) {
 	conn, client, ctx := dial()
 	defer conn.Close()
 
+	// Accept either "task-123" or "wf-task-123" — only prepend "wf-" if missing.
+	wfID := args[0]
+	if !strings.HasPrefix(wfID, "wf-") {
+		wfID = "wf-" + wfID
+	}
 	resp, err := client.GetWorkflow(ctx, &arlov1.GetWorkflowRequest{
-		WorkflowId: "wf-" + args[0],
+		WorkflowId: wfID,
 	})
 	if err != nil {
 		log.Fatalf("get workflow: %v", err)

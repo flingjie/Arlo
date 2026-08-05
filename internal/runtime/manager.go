@@ -41,8 +41,13 @@ func (m *Manager) StartInstance(ctx context.Context, spec RuntimeSpec) (*domain.
 		m.mu.Unlock()
 		return nil, fmt.Errorf("no adapter registered for runtime type: %s", spec.Type)
 	}
-	m.mu.Unlock()
+	if _, exists := m.instances[spec.InstanceID]; exists {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("runtime instance already exists: %s", spec.InstanceID)
+	}
 
+	// Pre-insert a placeholder in PREPARING state so concurrent calls with the same
+	// InstanceID are rejected atomically. The state is updated after adapter calls.
 	inst := &domain.RuntimeInstance{
 		ID:          spec.InstanceID,
 		Type:        spec.Type,
@@ -54,6 +59,8 @@ func (m *Manager) StartInstance(ctx context.Context, spec RuntimeSpec) (*domain.
 		Prompt:      spec.Prompt,
 		State:       domain.RuntimeStatePreparing,
 	}
+	m.instances[inst.ID] = inst
+	m.mu.Unlock()
 
 	// Prepare → Start.
 	if err := adapter.Prepare(ctx, *inst); err != nil {
@@ -68,10 +75,6 @@ func (m *Manager) StartInstance(ctx context.Context, spec RuntimeSpec) (*domain.
 
 	inst.State = domain.RuntimeStateRunning
 
-	m.mu.Lock()
-	m.instances[inst.ID] = inst
-	m.mu.Unlock()
-
 	return inst, nil
 }
 
@@ -79,12 +82,16 @@ func (m *Manager) StartInstance(ctx context.Context, spec RuntimeSpec) (*domain.
 func (m *Manager) StopInstance(ctx context.Context, id string) error {
 	m.mu.RLock()
 	inst, ok := m.instances[id]
-	adapter, adapterOk := m.adapters[inst.Type]
 	m.mu.RUnlock()
 
 	if !ok {
 		return fmt.Errorf("runtime instance not found: %s", id)
 	}
+
+	m.mu.RLock()
+	adapter, adapterOk := m.adapters[inst.Type]
+	m.mu.RUnlock()
+
 	if !adapterOk {
 		return fmt.Errorf("adapter not found for type: %s", inst.Type)
 	}
@@ -96,12 +103,16 @@ func (m *Manager) StopInstance(ctx context.Context, id string) error {
 func (m *Manager) DestroyInstance(ctx context.Context, id string) error {
 	m.mu.RLock()
 	inst, ok := m.instances[id]
-	adapter, adapterOk := m.adapters[inst.Type]
 	m.mu.RUnlock()
 
 	if !ok {
 		return fmt.Errorf("runtime instance not found: %s", id)
 	}
+
+	m.mu.RLock()
+	adapter, adapterOk := m.adapters[inst.Type]
+	m.mu.RUnlock()
+
 	if !adapterOk {
 		return fmt.Errorf("adapter not found for type: %s", inst.Type)
 	}
@@ -130,6 +141,7 @@ func (m *Manager) MarkExited(id string, exitCode int, metrics domain.RuntimeMetr
 }
 
 // GetInstance returns a runtime instance by ID.
+// It returns a copy to prevent data races with internal state mutations.
 func (m *Manager) GetInstance(ctx context.Context, id string) (*domain.RuntimeInstance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -138,19 +150,24 @@ func (m *Manager) GetInstance(ctx context.Context, id string) (*domain.RuntimeIn
 	if !ok {
 		return nil, fmt.Errorf("runtime instance not found: %s", id)
 	}
-	return inst, nil
+	copy := *inst
+	return &copy, nil
 }
 
 // SendInstruction routes a control message to a running instance.
 func (m *Manager) SendInstruction(ctx context.Context, id string, instruction domain.Instruction) error {
 	m.mu.RLock()
 	inst, ok := m.instances[id]
-	adapter, adapterOk := m.adapters[inst.Type]
 	m.mu.RUnlock()
 
 	if !ok {
 		return fmt.Errorf("runtime instance not found: %s", id)
 	}
+
+	m.mu.RLock()
+	adapter, adapterOk := m.adapters[inst.Type]
+	m.mu.RUnlock()
+
 	if !adapterOk {
 		return fmt.Errorf("adapter not found for type: %s", inst.Type)
 	}
@@ -162,12 +179,16 @@ func (m *Manager) SendInstruction(ctx context.Context, id string, instruction do
 func (m *Manager) AttachInstance(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
 	m.mu.RLock()
 	inst, ok := m.instances[id]
-	adapter, adapterOk := m.adapters[inst.Type]
 	m.mu.RUnlock()
 
 	if !ok {
 		return nil, nil, fmt.Errorf("runtime instance not found: %s", id)
 	}
+
+	m.mu.RLock()
+	adapter, adapterOk := m.adapters[inst.Type]
+	m.mu.RUnlock()
+
 	if !adapterOk {
 		return nil, nil, fmt.Errorf("adapter not found for type: %s", inst.Type)
 	}

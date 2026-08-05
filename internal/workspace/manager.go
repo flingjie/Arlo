@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -75,11 +76,14 @@ func (m *Manager) Destroy(ctx context.Context, wsID string) error {
 
 	m.mu.Lock()
 	delete(m.workspaces, wsID)
-	for slotID, slot := range m.slots {
-		// Remove all slots belonging to this workspace.
-		// In v0.1 we identify by name prefix; v1 will add a workspaceID field to ExecutionSlot.
-		_ = slot
-		delete(m.slots, slotID)
+	// Remove only slots belonging to this workspace.
+	// In v0.1 we identify by name prefix; v1 will add a workspaceID field to ExecutionSlot.
+	// Slot IDs use the format "workspaceID:slotName".
+	prefix := wsID + ":"
+	for slotID := range m.slots {
+		if strings.HasPrefix(slotID, prefix) {
+			delete(m.slots, slotID)
+		}
 	}
 	m.mu.Unlock()
 

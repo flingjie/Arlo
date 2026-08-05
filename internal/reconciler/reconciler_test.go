@@ -1153,3 +1153,32 @@ func TestCompleteWorkflowEmitsResultPaths(t *testing.T) {
 		t.Fatal("TASK_COMPLETED not found")
 	}
 }
+
+// TestGraphRegistryConcurrent verifies that concurrent Submit (write) and
+// Reconcile/read operations on graphRegistry do not race. Run with -race.
+func TestGraphRegistryConcurrent(t *testing.T) {
+	r, es, ss, eng := newTestReconciler(t)
+
+	_, wfID := seedWorkflow(t, es, ss, r, eng, bugfixYAML, "t1")
+
+	// Start a goroutine that continuously Submits new graphs (writes).
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			wf := fmt.Sprintf("wf-conc-%d", i)
+			r.Submit(wf, &domain.ExecutableGraph{
+				Name:    "concurrent",
+				Version: 1,
+				Nodes:   []domain.ExecutableNode{{ID: "n1", SkillRef: domain.SkillRef{Name: "test"}}},
+			})
+		}
+	}()
+
+	// Concurrently reconcile the seeded workflow (reads graphRegistry).
+	for i := 0; i < 50; i++ {
+		_ = r.Reconcile(context.Background(), wfID)
+	}
+
+	<-done
+}

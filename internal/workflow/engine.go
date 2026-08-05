@@ -75,8 +75,13 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 		}
 
 		gate := domain.GateNone
-		if nd.Gate == "human_approval" {
+		switch nd.Gate {
+		case "":
+			// no gate — default GateNone
+		case "human_approval":
 			gate = domain.GateHumanApproval
+		default:
+			return nil, fmt.Errorf("node %s: unknown gate %q", nd.ID, nd.Gate)
 		}
 
 		runtime := domain.RuntimeRef{
@@ -93,7 +98,8 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 			Runtime:   runtime,
 			DependsOn: dependsOn,
 			Gate:      gate,
-			Retry:     retry,
+			Retry:       retry,
+			Transitions: mapTransitions(nd.ID, nd.Transitions),
 		})
 	}
 
@@ -122,6 +128,16 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 		graph.Version = 1
 	}
 
+	// Validate non-negative values.
+	for _, n := range graph.Nodes {
+		if n.Retry.MaxRetries < 0 {
+			return nil, fmt.Errorf("node %s: max_retries must not be negative, got %d", n.ID, n.Retry.MaxRetries)
+		}
+	}
+	if graph.Policy.MaxConcurrentNodes < 0 {
+		return nil, fmt.Errorf("max_concurrent_nodes must not be negative, got %d", graph.Policy.MaxConcurrentNodes)
+	}
+
 	return graph, nil
 }
 
@@ -145,6 +161,9 @@ func (e *Engine) Validate(ctx context.Context, graph *domain.ExecutableGraph) er
 	// Validate dependencies reference existing nodes.
 	for _, n := range graph.Nodes {
 		for _, dep := range n.DependsOn {
+			if dep == n.ID {
+				return fmt.Errorf("node %s: cannot depend on itself", n.ID)
+			}
 			if !ids[dep] {
 				return fmt.Errorf("node %s: depends on unknown node %s", n.ID, dep)
 			}
@@ -173,14 +192,16 @@ func (e *Engine) Validate(ctx context.Context, graph *domain.ExecutableGraph) er
 
 // Instantiate creates a WorkflowInstance from a compiled graph.
 func (e *Engine) Instantiate(ctx context.Context, taskID string, graph *domain.ExecutableGraph) (*domain.WorkflowInstance, error) {
-	graph.ID = taskID + "-" + graph.Name
+	// Copy the graph to avoid mutating the caller's reference.
+	g := *graph
+	g.ID = taskID + "-" + g.Name
 
 	return &domain.WorkflowInstance{
-		ID:        graph.ID,
+		ID:        g.ID,
 		TaskID:    taskID,
-		Graph:     graph,
+		Graph:     &g,
 		Status:    domain.WorkflowStatusActive,
-		Version:   graph.Version,
+		Version:   g.Version,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}, nil
@@ -194,7 +215,8 @@ func (e *Engine) Evaluate(ctx context.Context, graph *domain.ExecutableGraph, st
 	// Check if workflow has reached a terminal state.
 	if state.Status == domain.WorkflowStatusCompleted ||
 		state.Status == domain.WorkflowStatusFailed ||
-		state.Status == domain.WorkflowStatusCancelled {
+		state.Status == domain.WorkflowStatusCancelled ||
+		state.Status == domain.WorkflowStatusPaused {
 		return nil, nil
 	}
 
@@ -393,17 +415,23 @@ type resultDef struct {
 }
 
 type nodeDef struct {
-	ID        string      `yaml:"id"`
-	Skill     string      `yaml:"skill"`
-	DependsOn []string    `yaml:"depends_on"`
-	Gate      string      `yaml:"gate"`
-	Retry     retryDef    `yaml:"retry"`
-	Runtime   runtimeDef  `yaml:"runtime"`
+	ID          string          `yaml:"id"`
+	Skill       string          `yaml:"skill"`
+	DependsOn   []string        `yaml:"depends_on"`
+	Gate        string          `yaml:"gate"`
+	Retry       retryDef        `yaml:"retry"`
+	Runtime     runtimeDef      `yaml:"runtime"`
+	Transitions []transitionDef `yaml:"transitions"`
 }
 
 type runtimeDef struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+}
+
+type transitionDef struct {
+	To   string `yaml:"to"`
+	When string `yaml:"when"`
 }
 
 type retryDef struct {
@@ -417,6 +445,23 @@ type policyDef struct {
 }
 
 // ── Graph Utilities ──────────────────────────────
+
+// mapTransitions converts YAML transition defs to domain Transitions,
+// setting From to the parent node's ID.
+func mapTransitions(nodeID string, defs []transitionDef) []domain.Transition {
+	if len(defs) == 0 {
+		return nil
+	}
+	transitions := make([]domain.Transition, 0, len(defs))
+	for _, td := range defs {
+		transitions = append(transitions, domain.Transition{
+			From: nodeID,
+			To:   td.To,
+			When: td.When,
+		})
+	}
+	return transitions
+}
 
 // buildEdges creates explicit Edge structs from node DependsOn declarations.
 func buildEdges(nodes []domain.ExecutableNode) []domain.Edge {

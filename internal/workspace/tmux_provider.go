@@ -7,15 +7,17 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
 )
 
 // TmuxProvider creates workspaces as tmux sessions and slots as tmux windows.
 type TmuxProvider struct {
-	socketName  string                     // tmux socket name, e.g. "arlo"
-	sessions    map[string]*tmuxSession   // workspaceID → session
-	mu          sync.RWMutex
+	socketName   string                     // tmux socket name, e.g. "arlo"
+	sessions     map[string]*tmuxSession    // workspaceID → session
+	PollInterval time.Duration              // interval between pane content polls
+	mu           sync.RWMutex
 }
 
 type tmuxSession struct {
@@ -32,8 +34,9 @@ type tmuxWindow struct {
 // NewTmuxProvider creates a new TmuxProvider.
 func NewTmuxProvider(socketName string) *TmuxProvider {
 	return &TmuxProvider{
-		socketName: socketName,
-		sessions:   make(map[string]*tmuxSession),
+		socketName:   socketName,
+		sessions:     make(map[string]*tmuxSession),
+		PollInterval: 100 * time.Millisecond,
 	}
 }
 
@@ -187,13 +190,10 @@ func (p *TmuxProvider) Attach(ctx context.Context, slotID string) (<-chan domain
 	go func() {
 		defer close(ch)
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+		ticker := time.NewTicker(p.PollInterval)
+		defer ticker.Stop()
 
+		for {
 			content, err := p.tmuxOutput("capture-pane", "-t", slotID, "-p", "-e")
 			if err != nil {
 				return
@@ -206,6 +206,12 @@ func (p *TmuxProvider) Attach(ctx context.Context, slotID string) (<-chan domain
 			}:
 			case <-ctx.Done():
 				return
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
 			}
 		}
 	}()
@@ -226,11 +232,21 @@ type tmuxWriter struct {
 }
 
 func (w *tmuxWriter) Write(p []byte) (int, error) {
-	cmd := w.provider.tmux("send-keys", "-t", w.slotID, string(p))
+	escaped := escapeTmuxKeys(string(p))
+	cmd := w.provider.tmux("send-keys", "-t", w.slotID, escaped)
 	if err := cmd.Run(); err != nil {
 		return 0, fmt.Errorf("send-keys to %s: %w", w.slotID, err)
 	}
 	return len(p), nil
+}
+
+// escapeTmuxKeys escapes special characters that tmux would otherwise interpret
+// in send-keys arguments: semicolons, backslashes, and dollar signs.
+func escapeTmuxKeys(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `;`, `\;`)
+	s = strings.ReplaceAll(s, `$`, `\$`)
+	return s
 }
 
 // Status returns the current status of a tmux session.

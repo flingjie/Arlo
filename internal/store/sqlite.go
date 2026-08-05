@@ -5,20 +5,43 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// subscriber wraps a subscriber channel with safe one-time close.
+// subscriber wraps a subscriber channel with safe concurrent send/close.
 type subscriber struct {
 	ch     chan Event
-	once   sync.Once
+	mu     sync.Mutex
+	closed bool
 }
 
+// send delivers an event to the subscriber. Returns false if the subscriber is closed.
+func (s *subscriber) send(e Event) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	select {
+	case s.ch <- e:
+	default:
+		// Channel full, drop event to avoid blocking the writer.
+	}
+	return true
+}
+
+// close safely closes the subscriber channel. Safe to call multiple times.
 func (s *subscriber) close() {
-	s.once.Do(func() { close(s.ch) })
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.closed = true
+		close(s.ch)
+	}
 }
 
 // SQLiteStore implements EventStore using SQLite with WAL mode.
@@ -26,9 +49,9 @@ func (s *subscriber) close() {
 type SQLiteStore struct {
 	db *sql.DB
 
-	mu           sync.RWMutex
-	subscribers  map[int64]*subscriber
-	nextSubID    int64
+	mu          sync.RWMutex
+	subscribers map[int64]*subscriber
+	nextSubID   int64
 	lastPosition int64
 }
 
@@ -91,9 +114,6 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		UNIQUE(stream_id, version)
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_events_stream
-		ON events(stream_id, version);
-
 	CREATE INDEX IF NOT EXISTS idx_events_type
 		ON events(event_type);
 	`
@@ -107,6 +127,7 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 
 // Append writes events atomically to a stream.
 // Events are assigned auto-incremented version numbers within the stream.
+// The caller's input slice is never modified.
 func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Event) ([]int64, error) {
 	if len(events) == 0 {
 		return nil, nil
@@ -132,8 +153,12 @@ func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Even
 		return nil, fmt.Errorf("query max version: %w", err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
+	timestampStr := now.Format(time.RFC3339)
 	positions := make([]int64, len(events))
+
+	// Build copies of events to avoid mutating caller's slice.
+	appended := make([]Event, len(events))
 
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO events (stream_id, version, event_id, event_type, payload, timestamp)
@@ -147,9 +172,6 @@ func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Even
 
 	for i := range events {
 		version := maxVersion + i + 1
-		events[i].StreamID = streamID
-		events[i].Version = version
-		events[i].Timestamp, _ = time.Parse(time.RFC3339, now)
 
 		payload, err := json.Marshal(events[i].Payload)
 		if err != nil {
@@ -163,15 +185,29 @@ func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Even
 			events[i].ID,
 			string(events[i].Type),
 			payload,
-			now,
+			timestampStr,
 		)
 		if err != nil {
 			s.mu.Unlock()
+			if isUniqueConstraintError(err) {
+				return nil, fmt.Errorf("insert event %s (version %d): %w", events[i].ID, version, ErrDuplicateEventID)
+			}
 			return nil, fmt.Errorf("insert event %s (version %d): %w", events[i].ID, version, err)
 		}
 
 		pos, _ := result.LastInsertId()
 		positions[i] = pos
+
+		// Build the appended event copy with store-assigned fields.
+		appended[i] = Event{
+			ID:        events[i].ID,
+			Type:      events[i].Type,
+			Payload:   events[i].Payload,
+			StreamID:  streamID,
+			Version:   version,
+			Position:  pos,
+			Timestamp: now,
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -182,8 +218,7 @@ func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Even
 	s.lastPosition = positions[len(positions)-1]
 	s.mu.Unlock()
 
-	// Notify subscribers outside the main lock to avoid deadlock
-	// with RLock/RUnlock. Make a copy under RLock, then notify.
+	// Notify subscribers outside the main lock to avoid deadlock.
 	s.mu.RLock()
 	subs := make(map[int64]*subscriber, len(s.subscribers))
 	for id, sub := range s.subscribers {
@@ -191,17 +226,18 @@ func (s *SQLiteStore) Append(ctx context.Context, streamID string, events []Even
 	}
 	s.mu.RUnlock()
 
-	for i := range events {
-		events[i].Position = positions[i]
+	for i := range appended {
 		for _, sub := range subs {
-			select {
-			case sub.ch <- events[i]:
-			default:
-			}
+			sub.send(appended[i])
 		}
 	}
 
 	return positions, nil
+}
+
+// isUniqueConstraintError checks if a SQLite error is a UNIQUE constraint violation.
+func isUniqueConstraintError(err error) bool {
+	return strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // Read reads events from a stream starting at fromVersion (inclusive).
@@ -257,8 +293,8 @@ func (s *SQLiteStore) ReadAll(ctx context.Context, fromPosition int64, limit int
 
 // Subscribe returns a channel that receives new events as they are appended.
 // The channel is closed when ctx is cancelled or the store is closed.
-// Events are delivered starting from the event after fromPosition.
-// Historical events from fromPosition onward are replayed first, then live
+// Events are delivered starting from the event after fromPosition (exclusive).
+// Historical events from fromPosition+1 onward are replayed first, then live
 // events are delivered as they are appended.
 func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan Event, error) {
 	s.mu.Lock()
@@ -280,13 +316,13 @@ func (s *SQLiteStore) Subscribe(ctx context.Context, fromPosition int64) (<-chan
 		sub.close()
 	}()
 
-	// Replay historical events before the caller starts consuming live events.
 	// Snapshot lastPosition BEFORE replaying so events appended during replay
 	// are delivered only once — via the Append notification path.
 	caughtUpTo := s.lastPosition
 
 	go func() {
-		pos := fromPosition
+		// Start replay from fromPosition+1 because fromPosition is exclusive.
+		pos := fromPosition + 1
 		for {
 			events, nextPos, err := s.ReadAll(ctx, pos, 1000)
 			if err != nil || len(events) == 0 {
@@ -347,7 +383,10 @@ func scanEvents(rows *sql.Rows) ([]Event, error) {
 		}
 
 		e.Payload = json.RawMessage(payload)
-		e.Timestamp, _ = time.Parse(time.RFC3339, timestamp)
+		e.Timestamp, err = time.Parse(time.RFC3339, timestamp)
+		if err != nil {
+			return nil, fmt.Errorf("parse timestamp for event %s: %w", e.ID, err)
+		}
 		events = append(events, e)
 	}
 

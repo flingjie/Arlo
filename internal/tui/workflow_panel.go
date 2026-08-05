@@ -17,6 +17,7 @@ type WorkflowPanel struct {
 	detailOpen map[string]bool // session/gate sublines visible
 	narrow     bool            // column collapsed to icon+name
 	focused    bool
+	Follow     bool // auto-select the active step; paused on manual nav
 	dispatcher *Dispatcher
 
 	wfID      string
@@ -30,6 +31,7 @@ func NewWorkflowPanel(dispatcher *Dispatcher) *WorkflowPanel {
 		collapsed:  make(map[string]bool),
 		detailOpen: make(map[string]bool),
 		dispatcher: dispatcher,
+		Follow:     true,
 	}
 }
 
@@ -49,6 +51,11 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.Version > p.wfVersion {
 			p.wfVersion = msg.Version
 		}
+		if p.Follow {
+			p.followActiveStep()
+		} else {
+			p.clampSelected()
+		}
 		return nil, true
 	case tea.KeyMsg:
 		if !p.focused {
@@ -56,20 +63,23 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		switch msg.String() {
 		case "up", "k":
+			p.Follow = false
 			if p.selected > 0 {
 				p.selected--
 			}
 		case "down", "j":
-			if p.selected < len(p.nodes)-1 {
+			p.Follow = false
+			flat := p.flatNodes()
+			if p.selected < len(flat)-1 {
 				p.selected++
 			}
 		case "left", "h":
-			if p.selected < len(p.nodes) {
-				p.collapsed[p.nodes[p.selected].NodeId] = true
+			if id := p.GetSelectedNode(); id != "" {
+				p.collapsed[id] = true
 			}
 		case "right", "l":
-			if p.selected < len(p.nodes) {
-				p.collapsed[p.nodes[p.selected].NodeId] = false
+			if id := p.GetSelectedNode(); id != "" {
+				p.collapsed[id] = false
 			}
 		case " ":
 			id := p.GetSelectedNode()
@@ -85,6 +95,12 @@ func (p *WorkflowPanel) Update(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 func (p *WorkflowPanel) SetFocus(focused bool) { p.focused = focused }
+
+// ResumeFollow re-enables auto-follow and jumps to the active step.
+func (p *WorkflowPanel) ResumeFollow() {
+	p.Follow = true
+	p.followActiveStep()
+}
 
 // SetNarrow collapses the column to icon + short name (no status/sublines).
 func (p *WorkflowPanel) SetNarrow(narrow bool) { p.narrow = narrow }
@@ -189,10 +205,13 @@ func displayStatus(n *arlov1.NodeState) string {
 }
 
 func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, contentW int) {
-	selected := p.focused && p.selected == p.flatIndex(n)
-	cursor := SelectionCursor(selected)
+	isSel := p.selected == p.flatIndex(n)
+	// ▸ tracks the selected/active step even when the panel is unfocused,
+	// so follow mode remains visible while browsing Timeline/Inspector.
+	cursor := SelectionCursor(isSel)
 	label := displayStatus(n)
 	icon := StatusIcon(label)
+	statusSelected := isSel && p.focused
 
 	if p.narrow {
 		name := n.NodeId
@@ -205,7 +224,7 @@ func (p *WorkflowPanel) renderNode(sb *strings.Builder, n *arlov1.NodeState, w, 
 		}
 		sb.WriteString(boxLine("│ "+cursor+" "+icon+" "+name, " ", "│", w))
 	} else {
-		statusStyle := statusTextStyle(label, selected)
+		statusStyle := statusTextStyle(label, statusSelected)
 		styledLabel := statusStyle.Render(label)
 		prefix := cursor + " " + icon + " " + n.NodeId
 		sb.WriteString(boxLine("│ "+prefix+gapTo(styledLabel, contentW-lipgloss.Width(prefix)-1)+styledLabel, " ", "│", w))
@@ -257,67 +276,94 @@ func isBlocked(n *arlov1.NodeState) bool {
 }
 
 func (p *WorkflowPanel) flatIndex(target *arlov1.NodeState) int {
-	idx := 0
-	var walk func(n *arlov1.NodeState) bool
-	walk = func(n *arlov1.NodeState) bool {
+	for i, n := range p.flatNodes() {
 		if n.NodeId == target.NodeId {
-			return true
-		}
-		idx++
-		if !p.collapsed[n.NodeId] {
-			for _, childID := range n.Children {
-				for _, cn := range p.nodes {
-					if cn.NodeId == childID {
-						if walk(cn) {
-							return true
-						}
-						break
-					}
-				}
-			}
-		}
-		return false
-	}
-	for _, n := range p.nodes {
-		if len(n.DependsOn) == 0 {
-			if walk(n) {
-				return idx
-			}
+			return i
 		}
 	}
-	return idx
+	return 0
 }
 
 func (p *WorkflowPanel) GetSelectedNode() string {
-	idx := -1
-	var result string
-	var walk func(n *arlov1.NodeState) bool
-	walk = func(n *arlov1.NodeState) bool {
-		idx++
-		if idx == p.selected {
-			result = n.NodeId
-			return true
+	flat := p.flatNodes()
+	if p.selected >= 0 && p.selected < len(flat) {
+		return flat[p.selected].NodeId
+	}
+	return ""
+}
+
+// flatNodes returns nodes in tree display order (roots, then children).
+func (p *WorkflowPanel) flatNodes() []*arlov1.NodeState {
+	var out []*arlov1.NodeState
+	var walk func(n *arlov1.NodeState)
+	walk = func(n *arlov1.NodeState) {
+		out = append(out, n)
+		if p.collapsed[n.NodeId] {
+			return
 		}
-		if !p.collapsed[n.NodeId] {
-			for _, childID := range n.Children {
-				for _, cn := range p.nodes {
-					if cn.NodeId == childID {
-						if walk(cn) {
-							return true
-						}
-						break
-					}
+		for _, childID := range n.Children {
+			for _, cn := range p.nodes {
+				if cn.NodeId == childID {
+					walk(cn)
+					break
 				}
 			}
 		}
-		return false
 	}
 	for _, n := range p.nodes {
 		if len(n.DependsOn) == 0 {
-			if walk(n) {
-				return result
-			}
+			walk(n)
 		}
 	}
-	return ""
+	return out
+}
+
+func (p *WorkflowPanel) clampSelected() {
+	flat := p.flatNodes()
+	if len(flat) == 0 {
+		p.selected = 0
+		return
+	}
+	if p.selected >= len(flat) {
+		p.selected = len(flat) - 1
+	}
+	if p.selected < 0 {
+		p.selected = 0
+	}
+}
+
+// followActiveStep moves selection to the most relevant in-progress node.
+func (p *WorkflowPanel) followActiveStep() {
+	flat := p.flatNodes()
+	if len(flat) == 0 {
+		p.selected = 0
+		return
+	}
+	bestIdx, bestPri := 0, 99
+	for i, n := range flat {
+		pri := activeStepPriority(n)
+		if pri < bestPri {
+			bestPri = pri
+			bestIdx = i
+		}
+	}
+	p.selected = bestIdx
+}
+
+// activeStepPriority ranks nodes for auto-follow (lower = more relevant).
+func activeStepPriority(n *arlov1.NodeState) int {
+	switch displayStatus(n) {
+	case "RUNNING", "STARTING":
+		return 0
+	case "BLOCKED":
+		return 1
+	case "FAILED", "CANCELLED":
+		return 2
+	case "READY":
+		return 3
+	case "WAITING", "PENDING":
+		return 4
+	default: // COMPLETED and unknown
+		return 5
+	}
 }

@@ -258,6 +258,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "s":
 		m.timelinePanel.ResumeFollow()
+		m.workflowPanel.ResumeFollow()
+		m.syncInspectorToSelection()
 		return m, nil
 	case "c":
 		m.timelinePanel.ToggleCompact()
@@ -811,7 +813,7 @@ func (m *Model) renderHelpOverlay() string {
 		"│  p / r    approve / reject             │",
 		"│  R        retry                        │",
 		"│  f        filter                       │",
-		"│  s        resume timeline follow       │",
+		"│  s        resume auto-follow           │",
 		"│  c        compact timeline             │",
 		"│  →        expand timeline line         │",
 		"│  i        inspector overlay (narrow)   │",

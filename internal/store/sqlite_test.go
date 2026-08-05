@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -217,7 +218,9 @@ func TestReadAllPagination(t *testing.T) {
 	}
 }
 
-// TestSubscribe verifies real-time event delivery via subscription.
+// TestSubscribe verifies real-time event delivery via subscription
+// with correct exclusive fromPosition semantics: subscribing from
+// the last known position should NOT replay historical events.
 func TestSubscribe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -228,6 +231,12 @@ func TestSubscribe(t *testing.T) {
 	s.Append(ctx, "stream-1", []Event{
 		testEvent("evt-0", EventTaskCreated, nil),
 	})
+
+	// Verify last position is 1.
+	lastPos := s.LastPosition()
+	if lastPos != 1 {
+		t.Fatalf("expected lastPosition=1, got %d", lastPos)
+	}
 
 	// Subscribe from position 1 (exclusive — get events after position 1).
 	ch, err := s.Subscribe(ctx, 1)
@@ -242,18 +251,23 @@ func TestSubscribe(t *testing.T) {
 		})
 	}()
 
+	// Should receive evt-1 (the new event), NOT evt-0 (historical, excluded).
 	select {
 	case e := <-ch:
 		if e.ID != "evt-1" {
 			t.Errorf("subscribed event ID = %s, want evt-1", e.ID)
+		}
+		if e.Position != 2 {
+			t.Errorf("subscribed event position = %d, want 2", e.Position)
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for event")
 	}
 }
 
-// TestSubscribeDeliversNewEventsOnly verifies subscription from position 0 delivers events appended after subscription.
-// Subscribe does NOT replay historical events — use ReadAll for that.
+// TestSubscribeDeliversNewEventsOnly verifies that subscribing from the
+// current last position delivers only events appended after subscription.
+// It should NOT replay historical events (use ReadAll for that).
 func TestSubscribeDeliversNewEventsOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -265,8 +279,10 @@ func TestSubscribeDeliversNewEventsOnly(t *testing.T) {
 		testEvent("evt-old", EventTaskCreated, nil),
 	})
 
-	// Subscribe. fromPosition is advisory in v0.1 — subscription skips past events.
-	ch, err := s.Subscribe(ctx, 0)
+	// Subscribe from the current last position so that no historical
+	// events are included (exclusive semantics).
+	lastPos := s.LastPosition()
+	ch, err := s.Subscribe(ctx, lastPos)
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
@@ -285,6 +301,96 @@ func TestSubscribeDeliversNewEventsOnly(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for event")
+	}
+}
+
+// TestSubscribeReplaysHistoricalEvents verifies that subscribing from an
+// earlier position replays events with position > fromPosition (exclusive).
+func TestSubscribeReplaysHistoricalEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s := newTestStore(t)
+
+	// Pre-populate 3 events.
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-0", EventTaskCreated, nil),
+	})
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-1", EventNodeStarted, nil),
+	})
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-2", EventNodeCompleted, nil),
+	})
+
+	// Subscribe from position 0 — should replay events at positions 1,2,3
+	// (exclusive of 0, and caughtUpTo=3 allows all three).
+	ch, err := s.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Read all 3 replayed events.
+	received := make([]Event, 0, 3)
+	for i := 0; i < 3; i++ {
+		select {
+		case e := <-ch:
+			received = append(received, e)
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for event %d (got %d)", i, len(received))
+		}
+	}
+
+	if len(received) != 3 {
+		t.Fatalf("expected 3 replayed events, got %d", len(received))
+	}
+	for i, e := range received {
+		if e.Position != int64(i+1) {
+			t.Errorf("event %d position = %d, want %d", i, e.Position, i+1)
+		}
+	}
+}
+
+// TestSubscribeFromLastPositionSkipsReplay verifies that subscribing from
+// the last persisted position delivers only events appended after subscription
+// — no historical events are replayed.
+func TestSubscribeFromLastPositionSkipsReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s := newTestStore(t)
+
+	// Pre-populate events at positions 1 and 2.
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-a", EventTaskCreated, nil),
+	})
+	s.Append(ctx, "stream-1", []Event{
+		testEvent("evt-b", EventNodeStarted, nil),
+	})
+
+	lastPos := s.LastPosition()
+	ch, err := s.Subscribe(ctx, lastPos) // exclusive of position 2
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Append new events after subscription.
+	go func() {
+		s.Append(context.Background(), "stream-1", []Event{
+			testEvent("evt-c", EventNodeCompleted, nil),
+		})
+	}()
+
+	select {
+	case e := <-ch:
+		if e.ID != "evt-c" {
+			t.Errorf("expected evt-c (new), got %s (historical replay)", e.ID)
+		}
+		if e.Position != 3 {
+			t.Errorf("expected position 3, got %d", e.Position)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for new event")
 	}
 }
 
@@ -350,7 +456,7 @@ func TestStreamVersionIsolation(t *testing.T) {
 	}
 }
 
-// TestUniqueEventID verifies duplicate event IDs are rejected.
+// TestUniqueEventID verifies duplicate event IDs are rejected with a sentinel error.
 func TestUniqueEventID(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -362,13 +468,148 @@ func TestUniqueEventID(t *testing.T) {
 		t.Fatalf("first append: %v", err)
 	}
 
-	// Append with same event ID should fail.
+	// Append with same event ID should fail with ErrDuplicateEventID.
 	_, err = s.Append(ctx, "stream-1", []Event{
 		testEvent("evt-1", EventNodeStarted, nil),
 	})
 	if err == nil {
 		t.Fatal("expected error for duplicate event ID, got nil")
 	}
+	if !errors.Is(err, ErrDuplicateEventID) {
+		t.Errorf("expected ErrDuplicateEventID, got %v", err)
+	}
+}
+
+// TestAppendDoesNotMutateCallerSlice verifies that Append does not modify
+// the caller's input slice elements.
+func TestAppendDoesNotMutateCallerSlice(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	event := Event{
+		ID:      "evt-1",
+		Type:    EventTaskCreated,
+		Payload: json.RawMessage(`{"key":"value"}`),
+	}
+
+	// Make a copy to compare against after Append.
+	original := Event{
+		ID:      event.ID,
+		Type:    event.Type,
+		Payload: append(json.RawMessage(nil), event.Payload...),
+	}
+
+	_, err := s.Append(ctx, "stream-1", []Event{event})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Verify the original passed-in event was NOT mutated.
+	if event.StreamID != "" {
+		t.Errorf("caller's StreamID was mutated to %q, want empty", event.StreamID)
+	}
+	if event.Version != 0 {
+		t.Errorf("caller's Version was mutated to %d, want 0", event.Version)
+	}
+	if event.Position != 0 {
+		t.Errorf("caller's Position was mutated to %d, want 0", event.Position)
+	}
+	if event.Timestamp != (time.Time{}) {
+		t.Errorf("caller's Timestamp was mutated to %v, want zero", event.Timestamp)
+	}
+	if event.ID != original.ID {
+		t.Errorf("caller's ID was mutated to %q, want %q", event.ID, original.ID)
+	}
+}
+
+// TestDuplicateEventIDSentinelError verifies that duplicate event ID errors
+// wrap ErrDuplicateEventID and can be detected with errors.Is.
+func TestDuplicateEventIDSentinelError(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	_, err := s.Append(ctx, "stream-1", []Event{
+		testEvent("unique-1", EventTaskCreated, nil),
+	})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	// Duplicate within same batch should also be detected.
+	_, err = s.Append(ctx, "stream-1", []Event{
+		testEvent("unique-1", EventNodeStarted, nil),
+	})
+	if err == nil {
+		t.Fatal("expected error for duplicate event ID")
+	}
+	if !errors.Is(err, ErrDuplicateEventID) {
+		t.Errorf("errors.Is(err, ErrDuplicateEventID) = false, err=%v", err)
+	}
+
+	// Check error message contains the event ID.
+	if errStr := err.Error(); errStr == "" {
+		t.Error("error should have a non-empty message")
+	}
+}
+
+// TestCloseDuringAppendNoRace verifies that concurrent Append notifications
+// and Close do not race. Multiple goroutines append while main goroutine closes.
+func TestCloseDuringAppendNoRace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s := newTestStore(t)
+
+	// Start a subscriber so Append has channels to notify.
+	ch, err := s.Subscribe(ctx, 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	var wg sync.WaitGroup
+
+	// Goroutine 1: drain the channel to prevent blocking.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range ch {
+		}
+	}()
+
+	// Goroutines 2-4: continuously append events.
+	for g := 0; g < 3; g++ {
+		wg.Add(1)
+		gid := g
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				_, err := s.Append(ctx, "stream-1", []Event{
+					testEvent(fmt.Sprintf("evt-g%d-%d", gid, i), EventTaskCreated, nil),
+				})
+				if err != nil {
+					// Close may cause errors — that's expected.
+					return
+				}
+			}
+		}()
+	}
+
+	// Give goroutines a moment to start appending.
+	time.Sleep(10 * time.Millisecond)
+
+	// Close the store while appends are in-flight.
+	// This should not panic, race, or deadlock.
+	if err := s.Close(); err != nil {
+		t.Logf("Close returned error (expected under concurrency): %v", err)
+	}
+
+	// Wait for all goroutines to finish.
+	wg.Wait()
 }
 
 // TestUniqueStreamVersion verifies duplicate stream+version is rejected.

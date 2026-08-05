@@ -920,3 +920,183 @@ nodes:
 		t.Error("expected PAUSE_NODE for implement")
 	}
 }
+
+	// ── Issue Tests (TDD: write failing tests first) ────
+
+	// TestCompileTransitions verifies conditional transitions are parsed from YAML.
+	func TestCompileTransitions(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		yamlWithTransitions := `
+name: with-transitions
+version: 1
+nodes:
+  - id: review
+    skill: code-review
+    transitions:
+      - to: implement
+        when: verdict != APPROVED
+  - id: implement
+    skill: implement-fix
+`
+		graph, err := eng.Compile(ctx, []byte(yamlWithTransitions))
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+
+		if len(graph.Nodes) != 2 {
+			t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
+		}
+
+		review := graph.Nodes[0]
+		if len(review.Transitions) != 1 {
+			t.Fatalf("expected 1 transition for review, got %d", len(review.Transitions))
+		}
+		tr := review.Transitions[0]
+		if tr.To != "implement" {
+			t.Errorf("transition.To = %s, want implement", tr.To)
+		}
+		if tr.When != "verdict != APPROVED" {
+			t.Errorf("transition.When = %s, want verdict != APPROVED", tr.When)
+		}
+		if tr.From != "review" {
+			t.Errorf("transition.From = %s, want review (should be set from parent node ID)", tr.From)
+		}
+	}
+
+	// TestEvaluatePausedWorkflow verifies PAUSED workflow produces no decisions.
+	func TestEvaluatePausedWorkflow(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+
+		state := domain.WorkflowState{
+			ID:     "wf-1",
+			Status: domain.WorkflowStatusPaused,
+			Nodes: map[string]domain.NodeState{
+				"analyze":   {NodeID: "analyze", Status: domain.NodeStatusPending},
+				"implement": {NodeID: "implement", Status: domain.NodeStatusPending},
+				"review":    {NodeID: "review", Status: domain.NodeStatusPending},
+			},
+		}
+
+		decisions, err := eng.Evaluate(ctx, graph, state)
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if len(decisions) != 0 {
+			t.Errorf("expected 0 decisions for PAUSED workflow, got %d: %v", len(decisions), decisions)
+		}
+	}
+
+	// TestInstantiateDoesNotMutateInput verifies Instantiate copies the graph instead of
+	// mutating the caller's reference.
+	func TestInstantiateDoesNotMutateInput(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		graph, _ := eng.Compile(ctx, []byte(bugfixYAML))
+		originalID := graph.ID // should be empty before instantiation
+
+		inst, err := eng.Instantiate(ctx, "task-123", graph)
+		if err != nil {
+			t.Fatalf("Instantiate: %v", err)
+		}
+
+		if inst == nil {
+			t.Fatal("expected instance, got nil")
+		}
+
+		// The original graph's ID should NOT be mutated.
+		if graph.ID != originalID {
+			t.Errorf("input graph ID was mutated: was %q, now %q", originalID, graph.ID)
+		}
+	}
+
+	// TestValidateSelfDependency verifies a node depending on itself produces a clear error.
+	func TestValidateSelfDependency(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		graph := &domain.ExecutableGraph{
+			Name: "self-dep",
+			Nodes: []domain.ExecutableNode{
+				{ID: "A", SkillRef: domain.SkillRef{Name: "s1"}, DependsOn: []string{"A"}},
+			},
+		}
+
+		err := eng.Validate(ctx, graph)
+		if err == nil {
+			t.Fatal("expected error for self-dependency")
+		}
+		if !contains(err.Error(), "cannot depend on itself") && !contains(err.Error(), "self") {
+			t.Errorf("error should mention self-dependency, got: %v", err)
+		}
+	}
+
+	// TestValidateNegativeMaxRetries verifies negative max_retries is rejected.
+	func TestValidateNegativeMaxRetries(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		yaml := `
+name: neg-retry
+nodes:
+  - id: step1
+    skill: do-something
+    retry:
+      max_retries: -1
+`
+		_, err := eng.Compile(ctx, []byte(yaml))
+		if err == nil {
+			t.Fatal("expected error for negative max_retries")
+		}
+		if !contains(err.Error(), "max_retries") && !contains(err.Error(), "negative") {
+			t.Errorf("error should mention max_retries or negative, got: %v", err)
+		}
+	}
+
+	// TestValidateNegativeMaxConcurrent verifies negative max_concurrent_nodes is rejected.
+	func TestValidateNegativeMaxConcurrent(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		yaml := `
+name: neg-concurrent
+nodes:
+  - id: step1
+    skill: do-something
+policy:
+  max_concurrent_nodes: -1
+`
+		_, err := eng.Compile(ctx, []byte(yaml))
+		if err == nil {
+			t.Fatal("expected error for negative max_concurrent_nodes")
+		}
+		if !contains(err.Error(), "max_concurrent") && !contains(err.Error(), "negative") {
+			t.Errorf("error should mention max_concurrent_nodes or negative, got: %v", err)
+		}
+	}
+
+	// TestCompileUnknownGate verifies unknown gate strings produce an error.
+	func TestCompileUnknownGate(t *testing.T) {
+		ctx := context.Background()
+		eng := NewEngine()
+
+		yaml := `
+name: bad-gate
+nodes:
+  - id: step1
+    skill: do-something
+    gate: magic_gate
+`
+		_, err := eng.Compile(ctx, []byte(yaml))
+		if err == nil {
+			t.Fatal("expected error for unknown gate")
+		}
+		if !contains(err.Error(), "gate") && !contains(err.Error(), "unknown") {
+			t.Errorf("error should mention gate, got: %v", err)
+		}
+	}

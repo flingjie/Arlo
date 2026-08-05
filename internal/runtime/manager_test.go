@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
+	"sync"
 	"testing"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -33,6 +35,15 @@ func (m *mockAdapter) SendInstruction(ctx context.Context, id string, instructio
 }
 func (m *mockAdapter) Status(ctx context.Context, id string) (domain.RuntimeStatus, error) {
 	return domain.RuntimeStatus{ID: id, State: domain.RuntimeStateRunning}, nil
+}
+
+// interactiveMockAdapter extends mockAdapter with Attach support for testing.
+type interactiveMockAdapter struct {
+	mockAdapter
+}
+
+func (m *interactiveMockAdapter) Attach(ctx context.Context, id string) (<-chan domain.PTYFrame, io.Writer, error) {
+	return nil, nil, nil
 }
 
 // TestStartInstance verifies basic start through the manager.
@@ -143,13 +154,152 @@ func TestGetInstance(t *testing.T) {
 	}
 }
 
-// TestGetInstanceNotFound verifies error for unknown instance.
-func TestGetInstanceNotFound(t *testing.T) {
+// TestStopInstanceNonexistent verifies StopInstance returns an error (not panic)
+// for a nonexistent instance ID. This guards against nil-pointer dereference.
+func TestStopInstanceNonexistent(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewManager()
 
-	_, err := mgr.GetInstance(ctx, "nonexistent")
+	err := mgr.StopInstance(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
+// TestDestroyInstanceNonexistent verifies DestroyInstance returns an error (not panic)
+// for a nonexistent instance ID.
+func TestDestroyInstanceNonexistent(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+
+	err := mgr.DestroyInstance(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
+// TestSendInstructionNonexistent verifies SendInstruction returns an error (not panic)
+// for a nonexistent instance ID.
+func TestSendInstructionNonexistent(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+
+	err := mgr.SendInstruction(ctx, "nonexistent", domain.Instruction{Type: "hint", Content: "try harder"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
+// TestAttachInstanceNonexistent verifies AttachInstance returns an error (not panic)
+// for a nonexistent instance ID.
+func TestAttachInstanceNonexistent(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+
+	_, _, err := mgr.AttachInstance(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent instance")
+	}
+}
+
+// TestGetInstanceReturnsCopy verifies that GetInstance returns a safe copy, not a pointer
+// into the internal map. Mutating the returned struct must not affect internal state.
+func TestGetInstanceReturnsCopy(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	_, _ = mgr.StartInstance(ctx, RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+	})
+
+	// Fetch the instance.
+	inst, err := mgr.GetInstance(ctx, "inst-1")
+	if err != nil {
+		t.Fatalf("GetInstance: %v", err)
+	}
+
+	// Mutate the returned struct.
+	inst.State = domain.RuntimeStateFailed
+	inst.ExitCode = 42
+
+	// Fetch again and verify internal state is unchanged.
+	inst2, err := mgr.GetInstance(ctx, "inst-1")
+	if err != nil {
+		t.Fatalf("GetInstance (second): %v", err)
+	}
+	if inst2.State != domain.RuntimeStateRunning {
+		t.Errorf("state = %s, want RUNNING (copy was not returned)", inst2.State)
+	}
+	if inst2.ExitCode != 0 {
+		t.Errorf("exitCode = %d, want 0 (copy was not returned)", inst2.ExitCode)
+	}
+}
+
+// TestConcurrentStartInstanceRejected verifies that starting an instance with the same
+// ID twice returns an error on the second call, preventing leaks.
+func TestConcurrentStartInstanceRejected(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	spec := RuntimeSpec{
+		InstanceID: "inst-1",
+		Type:       domain.RuntimeProviderClaudeCode,
+		SessionID:  "sess-1",
+		WorkDir:    "/tmp",
+	}
+
+	// First start succeeds.
+	inst1, err := mgr.StartInstance(ctx, spec)
+	if err != nil {
+		t.Fatalf("first StartInstance: %v", err)
+	}
+	if inst1.State != domain.RuntimeStateRunning {
+		t.Errorf("state = %s, want RUNNING", inst1.State)
+	}
+
+	// Second start with same InstanceID must return an error.
+	_, err = mgr.StartInstance(ctx, spec)
+	if err == nil {
+		t.Fatal("expected error for duplicate instance ID")
+	}
+}
+
+// TestConcurrentStartInstanceStress verifies that concurrent StartInstance calls
+// with the same ID are serialized correctly and only one succeeds.
+func TestConcurrentStartInstanceStress(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+	mgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, &mockAdapter{})
+
+	spec := RuntimeSpec{
+		InstanceID: "inst-stress",
+		Type:       domain.RuntimeProviderClaudeCode,
+		SessionID:  "sess-stress",
+		WorkDir:    "/tmp",
+	}
+
+	var wg sync.WaitGroup
+	successes := 0
+	var mu sync.Mutex
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := mgr.StartInstance(ctx, spec)
+			mu.Lock()
+			if err == nil {
+				successes++
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful start, got %d", successes)
 	}
 }

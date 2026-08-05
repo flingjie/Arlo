@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -43,7 +44,8 @@ type Reconciler struct {
 	skillRegistry *skill.Registry
 
 	// graphRegistry maps workflowID → compiled graph.
-	graphRegistry map[string]*domain.ExecutableGraph
+	graphRegistry   map[string]*domain.ExecutableGraph
+	graphRegistryMu sync.RWMutex
 
 	tickInterval time.Duration
 }
@@ -78,6 +80,8 @@ func (r *Reconciler) WithTickInterval(d time.Duration) *Reconciler {
 // Submit registers a workflow for reconciliation.
 // The graph is stored so Evaluate() has access to dependency information.
 func (r *Reconciler) Submit(workflowID string, graph *domain.ExecutableGraph) {
+	r.graphRegistryMu.Lock()
+	defer r.graphRegistryMu.Unlock()
 	r.graphRegistry[workflowID] = graph
 }
 
@@ -112,7 +116,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, workflowID string) error {
 		return fmt.Errorf("reconcile: get workflow %s: %w", workflowID, err)
 	}
 
+	r.graphRegistryMu.RLock()
 	graph, ok := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
 	if !ok {
 		return fmt.Errorf("reconcile: graph not found for workflow %s", workflowID)
 	}
@@ -162,7 +168,9 @@ func (r *Reconciler) reapRuntimes(ctx context.Context, workflowID string, state 
 		return
 	}
 
+	r.graphRegistryMu.RLock()
 	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
 	if graph == nil {
 		return
 	}
@@ -314,7 +322,9 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 	if r.runtimeMgr == nil {
 		return
 	}
+	r.graphRegistryMu.RLock()
 	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
 	if graph == nil {
 		return
 	}
@@ -672,7 +682,10 @@ func (r *Reconciler) executeCompleteWorkflow(ctx context.Context, workflowID str
 	}
 
 	completed := domain.TaskCompleted{TaskID: workflowID}
-	if graph := r.graphRegistry[workflowID]; graph != nil {
+	r.graphRegistryMu.RLock()
+	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
+	if graph != nil {
 		wd := workDir()
 		for _, res := range graph.Results {
 			completed.Results = append(completed.Results, domain.WorkflowResultRef{
@@ -747,7 +760,9 @@ func workDir() string {
 // emitArtifacts discovers output files from a node's skill and emits
 // ARTIFACT_CREATED events so the TUI can display them.
 func (r *Reconciler) emitArtifacts(ctx context.Context, workflowID string, ns domain.NodeState) {
+	r.graphRegistryMu.RLock()
 	graph := r.graphRegistry[workflowID]
+	r.graphRegistryMu.RUnlock()
 	if graph == nil {
 		return
 	}
