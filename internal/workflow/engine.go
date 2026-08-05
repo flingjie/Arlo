@@ -97,11 +97,20 @@ func (e *Engine) Compile(ctx context.Context, source []byte) (*domain.Executable
 		})
 	}
 
+	results := make([]domain.WorkflowResult, 0, len(def.Results))
+	for _, rd := range def.Results {
+		results = append(results, domain.WorkflowResult{
+			NodeID:   rd.Node,
+			Artifact: rd.Artifact,
+		})
+	}
+
 	graph := &domain.ExecutableGraph{
 		Name:    def.Name,
 		Version: def.Version,
 		Nodes:   nodes,
 		Edges:   buildEdges(nodes),
+		Results: results,
 		Policy: domain.SchedulingPolicy{
 			MaxConcurrentNodes: def.Policy.MaxConcurrentNodes,
 		},
@@ -139,6 +148,18 @@ func (e *Engine) Validate(ctx context.Context, graph *domain.ExecutableGraph) er
 			if !ids[dep] {
 				return fmt.Errorf("node %s: depends on unknown node %s", n.ID, dep)
 			}
+		}
+	}
+
+	for i, r := range graph.Results {
+		if r.NodeID == "" {
+			return fmt.Errorf("results[%d]: node is required", i)
+		}
+		if !ids[r.NodeID] {
+			return fmt.Errorf("results[%d]: unknown node %s", i, r.NodeID)
+		}
+		if r.Artifact == "" {
+			return fmt.Errorf("results[%d]: artifact is required", i)
 		}
 	}
 
@@ -359,10 +380,16 @@ func depsSatisfied(nodeID string, graph *domain.ExecutableGraph, state domain.Wo
 // ── YAML Schema ──────────────────────────────────
 
 type workflowDef struct {
-	Name    string     `yaml:"name"`
-	Version int        `yaml:"version"`
-	Nodes   []nodeDef  `yaml:"nodes"`
-	Policy  policyDef  `yaml:"policy"`
+	Name    string      `yaml:"name"`
+	Version int         `yaml:"version"`
+	Nodes   []nodeDef   `yaml:"nodes"`
+	Results []resultDef `yaml:"results"`
+	Policy  policyDef   `yaml:"policy"`
+}
+
+type resultDef struct {
+	Node     string `yaml:"node"`
+	Artifact string `yaml:"artifact"`
 }
 
 type nodeDef struct {

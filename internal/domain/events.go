@@ -13,9 +13,17 @@ type TaskCreated struct {
 	WorkflowID  string `json:"workflow_id"`
 }
 
+// WorkflowResultRef is a resolved final result attached to TASK_COMPLETED.
+type WorkflowResultRef struct {
+	NodeID   string `json:"node_id"`
+	Artifact string `json:"artifact"`
+	Path     string `json:"path"`
+}
+
 // TaskCompleted is the payload for TASK_COMPLETED events.
 type TaskCompleted struct {
-	TaskID string `json:"task_id"`
+	TaskID  string              `json:"task_id"`
+	Results []WorkflowResultRef `json:"results,omitempty"`
 }
 
 // TaskFailed is the payload for TASK_FAILED events.

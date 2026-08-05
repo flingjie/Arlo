@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lingjiefan/arlo/internal/domain"
@@ -147,6 +148,72 @@ nodes:
 	}
 	if graph.Nodes[0].Retry.Backoff != 10*1e9 { // 10s in nanoseconds
 		t.Errorf("default backoff = %v, want 10s", graph.Nodes[0].Retry.Backoff)
+	}
+}
+
+func TestCompileResults(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+	src := `
+name: with-results
+nodes:
+  - id: review
+    skill: architecture-review
+results:
+  - node: review
+    artifact: architecture-review.md
+`
+	graph, err := eng.Compile(ctx, []byte(src))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(graph.Results) != 1 {
+		t.Fatalf("Results len = %d, want 1", len(graph.Results))
+	}
+	if graph.Results[0].NodeID != "review" {
+		t.Errorf("NodeID = %q, want review", graph.Results[0].NodeID)
+	}
+	if graph.Results[0].Artifact != "architecture-review.md" {
+		t.Errorf("Artifact = %q, want architecture-review.md", graph.Results[0].Artifact)
+	}
+	if err := eng.Validate(ctx, graph); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateResultsUnknownNode(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+	graph := &domain.ExecutableGraph{
+		Name: "bad",
+		Nodes: []domain.ExecutableNode{
+			{ID: "review", SkillRef: domain.SkillRef{Name: "architecture-review"}},
+		},
+		Results: []domain.WorkflowResult{
+			{NodeID: "missing", Artifact: "out.md"},
+		},
+	}
+	err := eng.Validate(ctx, graph)
+	if err == nil || !strings.Contains(err.Error(), "unknown node") {
+		t.Fatalf("Validate error = %v, want unknown node", err)
+	}
+}
+
+func TestValidateResultsEmptyArtifact(t *testing.T) {
+	ctx := context.Background()
+	eng := NewEngine()
+	graph := &domain.ExecutableGraph{
+		Name: "bad",
+		Nodes: []domain.ExecutableNode{
+			{ID: "review", SkillRef: domain.SkillRef{Name: "architecture-review"}},
+		},
+		Results: []domain.WorkflowResult{
+			{NodeID: "review", Artifact: ""},
+		},
+	}
+	err := eng.Validate(ctx, graph)
+	if err == nil || !strings.Contains(err.Error(), "artifact") {
+		t.Fatalf("Validate error = %v, want artifact", err)
 	}
 }
 

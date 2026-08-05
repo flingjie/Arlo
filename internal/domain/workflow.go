@@ -21,6 +21,12 @@ const (
 	WorkflowStatusCancelled WorkflowStatus = "CANCELLED"
 )
 
+// WorkflowResult declares a final deliverable produced by a node.
+type WorkflowResult struct {
+	NodeID   string `json:"node_id"`
+	Artifact string `json:"artifact"`
+}
+
 // ExecutableGraph is a compiled workflow ready for execution.
 type ExecutableGraph struct {
 	ID      string           `json:"id"`
@@ -28,6 +34,7 @@ type ExecutableGraph struct {
 	Version int              `json:"version"`
 	Nodes   []ExecutableNode `json:"nodes"`
 	Edges   []Edge           `json:"edges,omitempty"`
+	Results []WorkflowResult `json:"results,omitempty"`
 	Policy  SchedulingPolicy `json:"policy,omitempty"`
 }
 
