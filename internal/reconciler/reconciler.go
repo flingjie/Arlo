@@ -501,6 +501,7 @@ func (r *Reconciler) launchRuntime(ctx context.Context, workflowID, nodeID strin
 		}
 
 		// Start streaming runtime events to the event store for TUI timeline.
+		go r.streamRuntimeEvents(context.Background(), workflowID, nodeID, instanceID)
 		return
 	}
 }

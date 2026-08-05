@@ -204,6 +204,18 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 						})
 					}
 				}
+				// Emit action events for significant agent activity.
+				if a.mgr != nil && event.Text != "" {
+					action := truncate(event.Text, 120)
+					if event.Type == "message_start" {
+						a.mgr.ReportEvent(inst.ID, RuntimeEvent{
+							Type:      RuntimeEventThinking,
+							RuntimeID: inst.ID,
+							Action:    action,
+							Timestamp: time.Now(),
+						})
+					}
+				}
 			}
 		}
 		<-stderrDone
