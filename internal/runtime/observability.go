@@ -159,3 +159,61 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// ParsePiJSON reads one line of Pi stream-json output and returns a StreamEvent.
+// Pi uses a different event schema from Claude:
+//
+//	message_end (role=assistant) → usage.input, usage.output, usage.totalTokens
+//	turn_end → same usage as final assistant message_end
+//	agent_end → final event, no usage
+//
+// Returns false if the line could not be parsed.
+func ParsePiJSON(line []byte) (StreamEvent, bool) {
+	var raw struct {
+		Type    string          `json:"type"`
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return StreamEvent{}, false
+	}
+
+	event := StreamEvent{
+		Timestamp: time.Now(),
+		Type:      raw.Type,
+	}
+
+	switch raw.Type {
+	case "message_end":
+		event.parsePiMessageEnd(raw.Message)
+	case "turn_end":
+		event.parsePiMessageEnd(raw.Message)
+	case "agent_end":
+		event.Type = "result" // normalize to Claude-equivalent type
+	}
+
+	return event, true
+}
+
+// parsePiMessageEnd extracts token usage from Pi's message/turn end events.
+// Pi's usage object: {"input": N, "output": N, "totalTokens": N, "cacheRead": N, ...}
+func (e *StreamEvent) parsePiMessageEnd(raw json.RawMessage) {
+	var msg struct {
+		Role  string `json:"role"`
+		Usage struct {
+			Input       int64 `json:"input"`
+			Output      int64 `json:"output"`
+			TotalTokens int64 `json:"totalTokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+
+	// Only track assistant message usage (skip user/toolResult).
+	if msg.Role != "assistant" {
+		return
+	}
+
+	e.TokensIn = msg.Usage.Input
+	e.TokensOut = msg.Usage.Output
+}

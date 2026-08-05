@@ -65,23 +65,26 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 		return fmt.Errorf("pi CLI not found: %w", err)
 	}
 
-	// Build args: pi --print --mode json --no-session [--provider X] [--model Y] <prompt>
+	// Build args: pi --print --mode json --no-session --provider <provider> --model <model> <prompt>
 	args := []string{
 		"--print",
 		"--mode", "json",
 		"--no-session",
 	}
 
-	provider := string(inst.Config.Model) // default via config
-	if inst.Config.PermissionMode != "" {
-		provider = inst.Config.PermissionMode
+	// Default to openai-codex provider (matches pi's defaultProvider setting).
+	// Without --provider, pi cannot resolve API keys for model-only lookups.
+	provider := "openai-codex"
+	if inst.Config.Capabilities != nil {
+		for _, cap := range inst.Config.Capabilities {
+			if cap == "anthropic" || cap == "google" || cap == "deepseek" {
+				provider = cap
+				break
+			}
+		}
 	}
-	_ = provider // provider is resolved from config, defaulting to env
+	args = append(args, "--provider", provider)
 
-	// Use provider from runtime config if specified (via model field as convention).
-	// The reconciler sets Config.Model to the node's runtime.model,
-	// and the node's runtime.provider is already encoded in the RuntimeRef.
-	// For Pi, we extract model from Config.
 	model := inst.Config.Model
 	if model == "" {
 		model = "deepseek-v4-pro" // default model
@@ -92,6 +95,18 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 	args = append(args, inst.Prompt)
 
 	cmd := exec.Command("pi", args...)
+
+	// Propagate local proxy environment for API access.
+	// When ANTHROPIC_BASE_URL points to a local proxy (e.g., http://127.0.0.1:15721),
+	// set the OpenAI-compatible env vars so Pi's openai-codex provider can use it.
+	env := os.Environ()
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+baseURL)
+	}
+	if authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN"); authToken != "" {
+		env = append(env, "OPENAI_API_KEY="+authToken)
+	}
+	cmd.Env = env
 
 	// Set working directory.
 	if inst.WorkDir != "" {
@@ -150,15 +165,12 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 			stdoutBuf.Write(line)
 			stdoutBuf.WriteByte('\n')
 
-			if event, ok := ParseStreamJSON(line); ok {
-				// result.modelUsage is the authoritative session total; replace
-				// rather than sum so we don't double-count.
-				if event.Type == "result" && (event.TokensIn > 0 || event.TokensOut > 0) {
+			if event, ok := ParsePiJSON(line); ok {
+				// Pi's message_end events carry cumulative usage (replace, not sum).
+				// The last message_end for the assistant has the authoritative session total.
+				if event.Type == "message_end" && (event.TokensIn > 0 || event.TokensOut > 0) {
 					cum.tokensIn = event.TokensIn
 					cum.tokensOut = event.TokensOut
-				} else {
-					cum.tokensIn += event.TokensIn
-					cum.tokensOut += event.TokensOut
 				}
 				if event.ToolName != "" {
 					cum.toolCalls++

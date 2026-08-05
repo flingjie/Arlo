@@ -92,3 +92,84 @@ func TestParseStreamJSON_PreferModelUsageOverZeroUsage(t *testing.T) {
 		t.Errorf("tokens = %d/%d, want 99/11 from modelUsage", ev.TokensIn, ev.TokensOut)
 	}
 }
+
+func TestParsePiJSON_MessageEnd(t *testing.T) {
+	// Pi's message_end for assistant carries usage.input/output.
+	line := []byte(`{
+		"type":"message_end",
+		"message":{
+			"role":"assistant",
+			"content":[{"type":"text","text":"Hi!"}],
+			"usage":{"input":64,"output":29,"cacheRead":3968,"cacheWrite":0,"reasoning":14,"totalTokens":4061}
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.Type != "message_end" {
+		t.Errorf("type = %q, want message_end", ev.Type)
+	}
+	if ev.TokensIn != 64 {
+		t.Errorf("TokensIn = %d, want 64", ev.TokensIn)
+	}
+	if ev.TokensOut != 29 {
+		t.Errorf("TokensOut = %d, want 29", ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_SkipsUserMessage(t *testing.T) {
+	// Pi's message_end for user/toolResult roles should not count tokens.
+	line := []byte(`{
+		"type":"message_end",
+		"message":{"role":"user","content":[{"type":"text","text":"hi"}],"usage":null}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.TokensIn != 0 || ev.TokensOut != 0 {
+		t.Errorf("user message_end should not count tokens, got %d/%d", ev.TokensIn, ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_AgentEnd(t *testing.T) {
+	// Pi's agent_end normalizes to 'result' type.
+	line := []byte(`{"type":"agent_end","messages":[],"willRetry":false}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.Type != "result" {
+		t.Errorf("type = %q, want result (normalized)", ev.Type)
+	}
+}
+
+func TestParsePiJSON_TurnEnd(t *testing.T) {
+	// Pi's turn_end carries cumulative usage from the last assistant message.
+	line := []byte(`{
+		"type":"turn_end",
+		"message":{
+			"role":"assistant",
+			"usage":{"input":200,"output":150,"totalTokens":5000}
+		}
+	}`)
+
+	ev, ok := ParsePiJSON(line)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if ev.TokensIn != 200 || ev.TokensOut != 150 {
+		t.Errorf("tokens = %d/%d, want 200/150", ev.TokensIn, ev.TokensOut)
+	}
+}
+
+func TestParsePiJSON_InvalidJSON(t *testing.T) {
+	_, ok := ParsePiJSON([]byte(`not json`))
+	if ok {
+		t.Error("expected parse failure for invalid JSON")
+	}
+}
