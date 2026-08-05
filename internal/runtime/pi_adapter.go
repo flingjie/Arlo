@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -132,6 +134,15 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 	stdoutBuf := &bytes.Buffer{}
 	stderrBuf := &bytes.Buffer{}
 
+	// Open a log file so users can tail the agent's output in real-time.
+	logDir := filepath.Join(os.Getenv("HOME"), ".arlo", "runtime")
+	os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, inst.ID+".log")
+	logFile, logErr := os.Create(logPath)
+	if logErr != nil {
+		slog.Warn("failed to create runtime log", "path", logPath, "error", logErr)
+	}
+
 	pi := &piInstance{
 		inst:   inst,
 		cmd:    cmd,
@@ -165,6 +176,12 @@ func (a *PiAdapter) Start(ctx context.Context, inst domain.RuntimeInstance) erro
 			line := scanner.Bytes()
 			stdoutBuf.Write(line)
 			stdoutBuf.WriteByte('\n')
+
+			// Also write to the runtime log file for real-time visibility.
+			if logFile != nil {
+				logFile.Write(line)
+				logFile.Write([]byte{'\n'})
+			}
 
 			if event, ok := ParsePiJSON(line); ok {
 				// Pi's message_end events carry cumulative usage (replace, not sum).
