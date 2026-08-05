@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	arlov1 "github.com/lingjiefan/arlo/api/gen/arlo/v1"
@@ -79,13 +80,33 @@ func (i WorkflowCreatedItem) Render() string {
 	return fmt.Sprintf("workflow created: %s (v%d)", i.Name, i.Version)
 }
 
+type TaskCompletedResult struct {
+	Artifact string
+	Path     string
+}
+
 type TaskCompletedItem struct {
 	Timestamp time.Time
+	Results   []TaskCompletedResult
 }
 
 func (i TaskCompletedItem) Time() time.Time { return i.Timestamp }
 func (i TaskCompletedItem) Level() Level    { return INFO }
-func (i TaskCompletedItem) Render() string  { return "workflow completed" }
+func (i TaskCompletedItem) Render() string {
+	if len(i.Results) == 0 {
+		return "workflow completed"
+	}
+	paths := make([]string, 0, len(i.Results))
+	for _, r := range i.Results {
+		if r.Path != "" {
+			paths = append(paths, r.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return "workflow completed"
+	}
+	return "workflow completed → " + strings.Join(paths, "; ")
+}
 
 type TaskFailedItem struct {
 	Timestamp time.Time
@@ -262,7 +283,7 @@ func EventToItem(event *arlov1.Event) TimelineItem {
 		name, ver := extractWorkflowCreated(event)
 		return WorkflowCreatedItem{Timestamp: t, Name: name, Version: ver}
 	case "TASK_COMPLETED":
-		return TaskCompletedItem{Timestamp: t}
+		return TaskCompletedItem{Timestamp: t, Results: extractTaskCompletedResults(event)}
 	case "TASK_FAILED":
 		return TaskFailedItem{Timestamp: t, Reason: extractString(event, "reason")}
 	case "NODE_CREATED":
@@ -351,6 +372,23 @@ func extractArtifact(event *arlov1.Event) (artifactID, name, path string) {
 	}
 	_ = json.Unmarshal(event.Payload, &payload)
 	return payload.ArtifactID, payload.Name, payload.Path
+}
+
+func extractTaskCompletedResults(event *arlov1.Event) []TaskCompletedResult {
+	var payload struct {
+		Results []struct {
+			Artifact string `json:"artifact"`
+			Path     string `json:"path"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return nil
+	}
+	out := make([]TaskCompletedResult, 0, len(payload.Results))
+	for _, r := range payload.Results {
+		out = append(out, TaskCompletedResult{Artifact: r.Artifact, Path: r.Path})
+	}
+	return out
 }
 
 func truncateID(id string) string {

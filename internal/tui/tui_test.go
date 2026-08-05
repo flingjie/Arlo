@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -1031,6 +1032,64 @@ func TestTruncateID(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Errorf("truncated ID should end with '...': %q", got)
+	}
+}
+
+// ── TaskCompletedItem results ──────────────────────
+
+func TestTaskCompletedItemRenderWithResults(t *testing.T) {
+	item := TaskCompletedItem{
+		Results: []TaskCompletedResult{
+			{Artifact: "architecture-review.md", Path: "/tmp/architecture-review.md"},
+		},
+	}
+	got := item.Render()
+	want := "workflow completed → /tmp/architecture-review.md"
+	if got != want {
+		t.Errorf("Render() = %q, want %q", got, want)
+	}
+}
+
+func TestTaskCompletedItemRenderMultipleResults(t *testing.T) {
+	item := TaskCompletedItem{
+		Results: []TaskCompletedResult{
+			{Path: "/a.md"},
+			{Path: "/b.md"},
+		},
+	}
+	got := item.Render()
+	want := "workflow completed → /a.md; /b.md"
+	if got != want {
+		t.Errorf("Render() = %q, want %q", got, want)
+	}
+}
+
+func TestEventToItemTaskCompletedResults(t *testing.T) {
+	payload, _ := json.Marshal(map[string]any{
+		"task_id": "wf1",
+		"results": []map[string]string{
+			{
+				"node_id":  "review",
+				"artifact": "architecture-review.md",
+				"path":     "/repo/architecture-review.md",
+			},
+		},
+	})
+	ev := &arlov1.Event{
+		Type:      "TASK_COMPLETED",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Payload:   payload,
+	}
+	item := EventToItem(ev)
+	tc, ok := item.(TaskCompletedItem)
+	if !ok {
+		t.Fatalf("got %T, want TaskCompletedItem", item)
+	}
+	if len(tc.Results) != 1 || tc.Results[0].Path != "/repo/architecture-review.md" {
+		t.Fatalf("Results = %+v", tc.Results)
+	}
+	if tc.Render() != "workflow completed → /repo/architecture-review.md" {
+		t.Errorf("Render = %q", tc.Render())
 	}
 }
 
