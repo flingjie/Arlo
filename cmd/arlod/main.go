@@ -83,6 +83,10 @@ func main() {
 	claudeAdapter.SetManager(rtMgr)
 	rtMgr.RegisterAdapter(domain.RuntimeProviderClaudeCode, claudeAdapter)
 
+	piAdapter := runtime.NewPiAdapter()
+	piAdapter.SetManager(rtMgr)
+	rtMgr.RegisterAdapter(domain.RuntimeProviderPi, piAdapter)
+
 	wsMgr := workspace.NewManager()
 	_ = wsMgr
 

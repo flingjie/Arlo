@@ -8,6 +8,7 @@ const (
 	RuntimeProviderClaudeCode RuntimeProvider = "claude-code"
 	RuntimeProviderCodex      RuntimeProvider = "codex"
 	RuntimeProviderGeminiCLI  RuntimeProvider = "gemini-cli"
+	RuntimeProviderPi         RuntimeProvider = "pi"
 )
 
 // RuntimeState represents the lifecycle state of a RuntimeInstance.
