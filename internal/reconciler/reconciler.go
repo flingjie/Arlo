@@ -876,6 +876,15 @@ func (r *Reconciler) emitArtifacts(ctx context.Context, workflowID string, ns do
 		path := filepath.Join(wd, name)
 		info, statErr := os.Stat(path)
 		if statErr != nil {
+			// File does not exist on disk — try to recover from runtime stdout.
+			instanceID := mkInstanceID(ns.NodeID, ns.RetryCount+1)
+			if r.runtimeMgr != nil {
+				if saveErr := r.runtimeMgr.SaveOutput(ctx, instanceID, path); saveErr == nil {
+					info, statErr = os.Stat(path) // re-stat after save
+				}
+			}
+		}
+		if statErr != nil {
 			slog.Debug("emitArtifacts: stat failed", "path", path, "error", statErr)
 			continue
 		}

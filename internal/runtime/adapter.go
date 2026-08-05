@@ -72,3 +72,9 @@ type RuntimeEvent struct {
 	Detail    string           `json:"detail,omitempty"`    // e.g., command output preview
 	Timestamp time.Time        `json:"timestamp"`
 }
+
+// OutputProvider is an optional interface for adapters that capture process stdout.
+// The reconciler uses it to save skill output files after node completion.
+type OutputProvider interface {
+	Output(ctx context.Context, id string) ([]byte, error)
+}

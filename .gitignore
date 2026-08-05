@@ -40,3 +40,5 @@ Thumbs.db
 /tmp/
 scripts/
 .worktrees/
+*.report.md
+architecture-review.md

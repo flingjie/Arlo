@@ -331,3 +331,19 @@ func (a *PiAdapter) Snapshot(ctx context.Context, id string) (domain.RuntimeSnap
 		LastMessage: lastMsg,
 	}, nil
 }
+
+// Output returns the captured stdout of the pi process.
+// Used by the reconciler to save skill output files after node completion.
+func (a *PiAdapter) Output(ctx context.Context, id string) ([]byte, error) {
+	a.mu.RLock()
+	pi, ok := a.instances[id]
+	a.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("instance not found: %s", id)
+	}
+	if pi.stdout == nil {
+		return nil, nil
+	}
+	return pi.stdout.Bytes(), nil
+}

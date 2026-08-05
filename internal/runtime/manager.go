@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -292,4 +293,37 @@ type RuntimeSpec struct {
 	SlotID      string
 	WorkDir     string
 	Prompt      string
+}
+
+// SaveOutput writes the runtime stdout to the given file path.
+// Used by the reconciler to persist skill output files after node completion.
+func (m *Manager) SaveOutput(ctx context.Context, id string, path string) error {
+	m.mu.RLock()
+	inst, ok := m.instances[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+
+	m.mu.RLock()
+	adapter, ok := m.adapters[inst.Type]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("adapter not found for type: %s", inst.Type)
+	}
+
+	// Optional interface: not all adapters capture output.
+	op, ok := adapter.(OutputProvider)
+	if !ok {
+		return nil
+	}
+
+	data, err := op.Output(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return os.WriteFile(path, data, 0644)
 }
