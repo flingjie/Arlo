@@ -39,3 +39,4 @@ Thumbs.db
 /build/
 /tmp/
 scripts/
+.worktrees/
